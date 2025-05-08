@@ -36,7 +36,7 @@ from sklearn.metrics import (
 from tqdm import tqdm
 from Bio.PDB import PDBParser
 from Bio.PDB.PDBExceptions import PDBConstructionWarning
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from itertools import product
 import optuna
 from optuna.trial import Trial
@@ -393,7 +393,7 @@ def predict_tertiary_structures(sequences):
     atom_coordinates_matrices = []
     with tqdm(range(len(pdbs)), total=len(pdbs), desc="Saving pdb files", disable=False) as progress:
         for (pdb_name, pdb_str) in zip(pdb_names, pdbs):
-            save_pdb(pdb_str, pdb_name, Path('./example/ESMFold_pdbs/'))
+            save_pdb(pdb_str, pdb_name, Path('./output/ESMFold_pdbs/'))
             coordinates_matrix = \
                 np.array(get_atom_coordinates_from_pdb(pdb_str, 'CA'),
                          dtype='float64')
@@ -401,11 +401,16 @@ def predict_tertiary_structures(sequences):
             atom_coordinates_matrices.append(coordinates_matrix)
             progress.update(1)
     logging.getLogger('workflow_logger'). \
-        info(f"Predicted tertiary structures available in: example/ESMFold_pdbs/")
+        info(f"Predicted tertiary structures available in: output/ESMFold_pdbs/")
     return atom_coordinates_matrices
 
 def load_tertiary_structures(sequences):
-    pdb_path = Path('./example/ESMFold_pdbs/')
+    pdb_path = Path('./output/ESMFold_pdbs/')
+
+    # Check if the path exists, and if not, create it
+    if not pdb_path.exists():
+        pdb_path.mkdir(parents=True, exist_ok=True)
+        
     if pdb_path is None:
         return [None] * len(sequences), sequences
 
@@ -1466,100 +1471,6 @@ def generate_graphs(sequence_list, dataset, tertiary_structure_method=False):
 
     return graphs
 
-#from graph.construct_graphs import construct_graphs2
-
-# select the ESM model for embeddings (you can select you desired model from https://github.com/facebookresearch/esm)
-# NOTICE: if you choose other model, the following model architecture might not be very compitable
-#         bseides,please revise the correspdoning parameters in esm_embeddings function (layers for feature extraction)
-
-# Create a unique file name for logging CSV outputs
-log_filename = f"optuna_hybrid_model_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-log_filename
-
-# whole dataset loading and dataset splitting
-dataset = pd.read_excel('./Final_non_redundant_sequences.xlsx',na_filter = False) # take care the NA sequence problem
-
-# generate the peptide embeddings
-sequence_list = dataset['sequence']
-
-# get embeddings for training and validation
-model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
-#X_data = generate_esm_embeddings(model, alphabet, sequence_list,'./whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv')
-# read the peptide embeddings
-X_data_name = './whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
-X_data = pd.read_csv(X_data_name,header=0, index_col = 0,delimiter=',')
-X = np.array(X_data)
-y = dataset['label']
-y_train = np.array(y) 
-
-# get graphs for training and validation
-graphs = generate_graphs(sequence_list, dataset, tertiary_structure_method=False)
-
-dataset_test = pd.read_excel('./kelm.xlsx',na_filter = False) # take care the NA sequence 
-sequence_list_test = dataset_test['sequence']
-# get embeddings for testing
-model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
-#X_test = generate_esm_embeddings(model, alphabet, sequence_list_test, './kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv')
-# read the peptide embeddings
-X_data_test_name = './kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
-X_test = pd.read_csv(X_data_test_name,header=0, index_col = 0,delimiter=',')
-X_test = np.array(X_test)
-y_test = dataset_test['label']
-y_test = np.array(y_test)
-
-# Normalize the data
-scaler = MinMaxScaler()
-X_combined = np.concatenate((X, X_test), axis=0)
-X_combined = scaler.fit_transform(X_combined)
-X_combined = scaler.transform(X_combined)
-
-X_train = X_combined[:5479]  # First 192 rows belong to X_test
-X_test = X_combined[5479:]  # The rest belong to X (original train set)
-
-# get graphs for testing
-graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False)
-
-"""
-study = optuna.create_study(direction="maximize")
-study.optimize(make_objective(X_train, graphs, y_train, X_test, graphs_test, y_test), n_trials=30)
-
-print("Best trial:")
-trial = study.best_trial
-
-print(f"  Value (Test AUC): {trial.value}")
-print(f"  Params: ")
-for key, value in trial.params.items():
-    print(f"    {key}: {value}")
-    
-params = trial.params
-"""
-
-"""
-#params = {"lr": 0.00225675878025153, "gat_hidden": 160, "batch_size": 32, "pos_weight_val": 4, "num_layers":2}
-
-#params = {"lr": 0.001, "gat_hidden": 160, "mlp_hidden": 32, "batch_size": 32, "pos_weight_val": 2}MLPC
-params = {"lr": 0.0005722845662804915, "gat_hidden": 160, "mlp_hidden": 32, "batch_size": 96, "pos_weight_val": 3.5, "num_layers":3}
-
-print("---------------------------- Training CNN + GAT----------------------------:")    
-model,val_y_gat,val_score_gat, metrics_val = train_hybrid_model(X_train, graphs, y_train, params, alpha=0.4, device='cuda')
-print("---------------------------- Testing CNN + GAT----------------------------:")  
-metrics_GAN, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
-
-print("---------------------------- Training & Testing CNN ----------------------------:")
-model_CNN, val_y_cnn, val_score_cnn, test_y_cnn, test_score_cnn, metrics_CNN = train_test_CNN_model(X_train, y_train, X_test, y_test, device='cuda')
-
-#compare_roc_curves(val_score_gat, val_y_gat, val_score_cnn, val_y_cnn, name_1='pLM + Graph', name_2='pLM', save_path="roc_auc_training.png")
-#compare_roc_curves(test_score_gat, test_y_gat, test_score_cnn, test_y_cnn, name_1='pLM + Graph', name_2='pLM', save_path="roc_auc_testing.png")
-"""
-
-"""
-params = {"lr": 0.0005722845662804915, "gat_hidden": 160, "mlp_hidden": 32, "batch_size": 96, "pos_weight_val": 3.5}
-model,val_y_gat,val_score_gat,metrcis = train_hybrid_model(X_train, graphs, y_train, params, alpha=0.5, device='cuda')
-#model = grid_search_train(X_train, graphs, y_train, X_test, graphs_test, y_test)
-metrics, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
-"""
-
-"""
 def evaluate_model_multiple_runs(n_runs, model_type='hybrid', X_train=None, graphs=None, y_train=None, X_test=None, graphs_test=None, y_test=None, params=None, device='cuda'):
     """
     Train and test a model multiple times and record metrics.
@@ -1619,6 +1530,102 @@ def evaluate_model_multiple_runs(n_runs, model_type='hybrid', X_train=None, grap
     
     return results
 
+#from graph.construct_graphs import construct_graphs2
+
+# select the ESM model for embeddings (you can select you desired model from https://github.com/facebookresearch/esm)
+# NOTICE: if you choose other model, the following model architecture might not be very compitable
+#         bseides,please revise the correspdoning parameters in esm_embeddings function (layers for feature extraction)
+
+# Create a unique file name for logging CSV outputs
+log_filename = f"optuna_hybrid_model_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+log_filename
+
+# whole dataset loading and dataset splitting
+dataset = pd.read_excel('./Final_non_redundant_sequences.xlsx',na_filter = False) # take care the NA sequence problem
+
+# generate the peptide embeddings
+sequence_list = dataset['sequence']
+
+# get embeddings for training and validation
+model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+X_data = generate_esm_embeddings(model, alphabet, sequence_list,'./whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv')
+# read the peptide embeddings
+X_data_name = './whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+X_data = pd.read_csv(X_data_name,header=0, index_col = 0,delimiter=',')
+X = np.array(X_data)
+y = dataset['label']
+y_train = np.array(y) 
+
+# get graphs for training and validation
+graphs = generate_graphs(sequence_list, dataset, tertiary_structure_method=False)
+
+dataset_test = pd.read_excel('./kelm.xlsx',na_filter = False) # take care the NA sequence 
+sequence_list_test = dataset_test['sequence']
+# get embeddings for testing
+model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+X_test = generate_esm_embeddings(model, alphabet, sequence_list_test, './kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv')
+# read the peptide embeddings
+X_data_test_name = './kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+X_test = pd.read_csv(X_data_test_name,header=0, index_col = 0,delimiter=',')
+X_test = np.array(X_test)
+y_test = dataset_test['label']
+y_test = np.array(y_test)
+
+# Normalize the data
+scaler = MinMaxScaler()
+X_combined = np.concatenate((X, X_test), axis=0)
+X_combined = scaler.fit_transform(X_combined)
+X_combined = scaler.transform(X_combined)
+
+X_train = X_combined[:5479]  # First 192 rows belong to X_test
+X_test = X_combined[5479:]  # The rest belong to X (original train set)
+
+# get graphs for testing
+graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False)
+
+"""
+study = optuna.create_study(direction="maximize")
+study.optimize(make_objective(X_train, graphs, y_train, X_test, graphs_test, y_test), n_trials=30)
+
+print("Best trial:")
+trial = study.best_trial
+
+print(f"  Value (Test AUC): {trial.value}")
+print(f"  Params: ")
+for key, value in trial.params.items():
+    print(f"    {key}: {value}")
+    
+params = trial.params
+"""
+
+"""
+#params = {"lr": 0.00225675878025153, "gat_hidden": 160, "batch_size": 32, "pos_weight_val": 4, "num_layers":2}
+
+#params = {"lr": 0.001, "gat_hidden": 160, "mlp_hidden": 32, "batch_size": 32, "pos_weight_val": 2}MLPC
+params = {"lr": 0.0005722845662804915, "gat_hidden": 160, "mlp_hidden": 32, "batch_size": 96, "pos_weight_val": 3.5, "num_layers":3}
+
+print("---------------------------- Training CNN + GAT----------------------------:")    
+model,val_y_gat,val_score_gat, metrics_val = train_hybrid_model(X_train, graphs, y_train, params, alpha=0.4, device='cuda')
+print("---------------------------- Testing CNN + GAT----------------------------:")  
+metrics_GAN, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
+
+print("---------------------------- Training & Testing CNN ----------------------------:")
+model_CNN, val_y_cnn, val_score_cnn, test_y_cnn, test_score_cnn, metrics_CNN = train_test_CNN_model(X_train, y_train, X_test, y_test, device='cuda')
+
+#compare_roc_curves(val_score_gat, val_y_gat, val_score_cnn, val_y_cnn, name_1='pLM + Graph', name_2='pLM', save_path="roc_auc_training.png")
+#compare_roc_curves(test_score_gat, test_y_gat, test_score_cnn, test_y_cnn, name_1='pLM + Graph', name_2='pLM', save_path="roc_auc_testing.png")
+"""
+
+"""
+params = {"lr": 0.0005722845662804915, "gat_hidden": 160, "mlp_hidden": 32, "batch_size": 96, "pos_weight_val": 3.5}
+model,val_y_gat,val_score_gat,metrcis = train_hybrid_model(X_train, graphs, y_train, params, alpha=0.5, device='cuda')
+#model = grid_search_train(X_train, graphs, y_train, X_test, graphs_test, y_test)
+metrics, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
+"""
+
+
+
+"""
 def print_results(model_name, results):
     print(f"\n=== {model_name} ===")
     for metric, stats in results.items():
@@ -1680,4 +1687,5 @@ for metric in metric_names:
         print("--> Significant (p < 0.05)")
     else:
         print("--> Not significant (p ≥ 0.05)")
+
 """
