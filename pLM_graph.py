@@ -44,194 +44,9 @@ import matplotlib.pyplot as plt
 import scipy.stats as stats
 from scipy.stats import ttest_rel
 
-# make_objective function removed, will be in parameter_optimization.py
 
-def train_and_evaluate_model(X,graphs,y,trial_params, log_csv_path=None, device='cuda'):
-            
-    ind = np.arange(len(y))
-    train_idx, test_idx = train_test_split(ind, test_size=0.2, random_state=123)#, stratify=y)
-    # Split embeddings
-    X_train, X_test = X[train_idx], X[test_idx]
-    y_train, y_test = y[train_idx], y[test_idx]  
-    y_train = y_train.to_numpy() if isinstance(y_train, pd.Series) else y_train # Ensure y_train is numpy
-    y_test = y_test.to_numpy() if isinstance(y_test, pd.Series) else y_test # Ensure y_test is numpy
+from graph.tertiary_structure_handler import load_tertiary_structures, predict_tertiary_structures
 
-
-    # Split graphs
-    graphs_train = [graphs[i] for i in train_idx.tolist()]
-    graphs_test = [graphs[i] for i in test_idx.tolist()]
-            
-    # Model initialization
-    model = HybridModel(
-        cnn_input_channels=1,
-        cnn_seq_len=1280,
-        node_feature_dimension=graphs_train[0].x.shape[1],
-        gat_hidden=trial_params["gat_hidden"],
-        alpha=trial_params["alpha"],
-        num_layers=trial_params["num_layers"]
-    ).to(device)
-
-    pos_weight = torch.tensor(trial_params["pos_weight_val"], device=device)
-    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=trial_params["lr"])
-    scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: step_decay(epoch) / 0.01)
-
-    best_val_mcc = 0.0
-    best_model_wts = copy.deepcopy(model.state_dict())
-    early_stop_patience = 20
-    epochs_without_improve = 0
-
-    metrics_train_log = [] # Renamed to avoid conflict if metrics_train is used later
-    batch_size = trial_params["batch_size"]
-    num_epochs = 100
-
-    for epoch in range(num_epochs):
-        model.train()
-        permutation = torch.randperm(X_train.shape[0])
-        epoch_loss = 0.0
-        correct = 0
-
-        for i in range(0, X_train.shape[0], batch_size):
-            indices = permutation[i:i+batch_size]
-            batch_x = torch.tensor(X_train[indices], dtype=torch.float32, device=device)
-            # Ensure graphs_train elements are correctly indexed
-            current_graphs_train_indices = indices.cpu().numpy() # Get numpy array of indices
-            batch_x_graph_list = [graphs_train[j] for j in current_graphs_train_indices]
-            batch_x_graph = Batch.from_data_list(batch_x_graph_list).to(device)
-            
-            batch_y_indices = indices.cpu().numpy() 
-            batch_y = torch.tensor(y_train[batch_y_indices], dtype=torch.float32, device=device).unsqueeze(1)
-            
-            optimizer.zero_grad()
-            outputs = model(
-                batch_x, 
-                batch_x_graph.x, 
-                batch_x_graph.edge_index, 
-                batch_x_graph.edge_attr, 
-                batch_x_graph.batch
-            )
-            loss = criterion(outputs, batch_y)
-            loss.backward()
-            optimizer.step()
-
-            epoch_loss += loss.item()
-            preds = (torch.sigmoid(outputs) > 0.5).float()
-            correct += (preds == batch_y).sum().item()
-
-        train_acc = correct / len(X_train)
-
-        # Validation
-        model.eval()
-        with torch.no_grad():
-            val_x = torch.tensor(X_test, dtype=torch.float32, device=device)
-            val_graph = Batch.from_data_list(graphs_test).to(device)
-            val_y = torch.tensor(y_test, dtype=torch.float32, device=device).unsqueeze(1)
-
-            val_outputs = model(
-                val_x,
-                val_graph.x,
-                val_graph.edge_index,
-                val_graph.edge_attr,
-                val_graph.batch
-            )
-
-            val_score = torch.sigmoid(val_outputs)
-            best_threshold, current_val_mcc = optimize_threshold(val_y, val_outputs) # Renamed to avoid conflict
-
-            val_preds = (val_score > best_threshold).float()
-            val_acc = accuracy_score(val_y.cpu(), val_preds.cpu())
-            val_precision = precision_score(val_y.cpu(), val_preds.cpu(), zero_division=0)
-            val_recall = recall_score(val_y.cpu(), val_preds.cpu(), zero_division=0)
-            val_auc = roc_auc_score(val_y.cpu(), val_score.cpu())
-            # val_mcc is already current_val_mcc
-            val_spec = specificity(val_y.cpu(), val_preds.cpu())
-
-            
-        metrics_train_log.append({
-            "epoch": epoch + 1,
-            "train_loss": epoch_loss,
-            "train_acc": train_acc,
-            "val_acc": val_acc,
-            "val_precision": val_precision,
-            "val_sensitivity": val_recall,
-            "val_specificity": val_spec,
-            "val_auc": val_auc,
-            "val_mcc": current_val_mcc
-        })
-
-        if current_val_mcc > best_val_mcc:
-            best_val_mcc = current_val_mcc
-            best_model_wts = copy.deepcopy(model.state_dict())
-            epochs_without_improve = 0
-        else:
-            epochs_without_improve += 1
-
-        if epochs_without_improve >= early_stop_patience:
-            break
-
-        scheduler.step()
-
-    model.load_state_dict(best_model_wts)
-    
-    # Log best result
-    best_result = {}
-    if metrics_train_log: # Check if metrics_train_log is not empty
-        best_result = metrics_train_log[-1] # Get the metrics from the last epoch run (or best epoch if saved)
-        best_result.update({
-            "gat_hidden": trial_params["gat_hidden"],
-            "alpha": trial_params["alpha"],
-            "lr": trial_params["lr"],
-            "batch_size": trial_params["batch_size"],
-            "pos_weight_val": trial_params["pos_weight_val"],
-            "num_layers":trial_params["num_layers"]
-        })
-
-    if log_csv_path and best_result: # ensure best_result is not empty
-        df = pd.DataFrame([best_result])
-        if not os.path.exists(log_csv_path):
-            df.to_csv(log_csv_path, index=False)
-        else:
-            df.to_csv(log_csv_path, mode='a', header=False, index=False)
-
-    return best_val_mcc, best_result      
-        
-def grid_search_train(X, graphs, y, X_test, graphs_test, y_test, device='cuda:0'):
-    alphas = np.linspace(0, 1, 11)
-    
-    # Assuming num_layers is part of params now
-    params = {"lr": 0.0005722845662804915, "gat_hidden": 160, "batch_size": 96, "pos_weight_val": 3.5, "num_layers": 3} # Added num_layers
-
-    best_model = None
-    best_mcc = -1
-    best_alpha_val = -1 # Renamed to avoid conflict
-    best_val_metrics_val = {} # Renamed
-    best_test_metrics_val = {} # Renamed
-
-
-    for alpha_val in alphas: # Renamed to avoid conflict
-        print(f"\nTesting config: alpha={alpha_val}")
-        # train_hybrid_model expects trial_params which includes alpha, so we pass it correctly
-        current_params = params.copy() # Use a copy to modify alpha for current iteration
-        # alpha is passed as a separate argument to train_hybrid_model, not inside params dict directly for that function
-        model, _, _, val_metrics_from_train = train_hybrid_model(X, graphs, y, current_params, alpha=alpha_val, device=device)
-        
-        current_test_metrics, _, _, _ = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
-
-        if current_test_metrics[0]["mcc"] > best_mcc:
-            best_val_metrics_val = val_metrics_from_train # This should be the validation metrics from the best epoch of this alpha run
-            best_test_metrics_val = current_test_metrics[0]
-            best_mcc = current_test_metrics[0]["mcc"]
-            best_model = model
-            best_alpha_val = alpha_val
-    
-    print(f"\nBest alpha: {best_alpha_val} with validation metrics:")
-    for key, value in best_val_metrics_val.items():
-        print(f"    {key}: {value}")
-    print(f"\nWith testing metrics:")
-    for key, value in best_test_metrics_val.items():
-        print(f"    {key}: {value}")
-    return best_model
 
 def plot_output_scores(val_scores, val_labels, save_path):
     # Ensure inputs are numpy arrays
@@ -309,58 +124,6 @@ def compare_roc_curves(scores_1, labels_1, scores_2, labels_2, name_1='Method 1'
     plt.savefig(save_path, dpi=300)
     plt.close()
     
-def save_pdb(pdb_str, pdb_name, path: Path): # Added type hint for path
-    # Ensure path is a Path object
-    if not isinstance(path, Path):
-        path = Path(path)
-    if not path.exists():
-        path.mkdir(parents=True, exist_ok=True)
-    with open(path.joinpath(pdb_name + ".pdb"), "w") as f:
-        f.write(pdb_str)
-
-def open_pdb(pdb_file):
-    with open(pdb_file, "r") as f:
-        pdb_str = f.read()
-        return pdb_str
-
-def get_atom_coordinates_from_pdb(pdb_str, atom_type='CA'):
-    try:
-        pdb_filehandle = io.StringIO(pdb_str)
-        # Suppress PDBConstructionWarning
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", PDBConstructionWarning)
-            parser = PDBParser(QUIET=True)
-            structure = parser.get_structure("pdb", pdb_filehandle)
-
-        atom_coordinates = []
-        for model in structure:
-            for chain in model:
-                for residue in chain:
-                    if residue.has_id(atom_type):
-                        atom = residue[atom_type]
-                        atom_coordinates.append(np.float64(atom.coord))
-
-        pdb_filehandle.close()
-        if not atom_coordinates: # Handle case where no coordinates are found
-            # raise ValueError(f"No atoms of type '{atom_type}' found in PDB string.")
-            # Return empty list or handle as per desired behavior for missing atoms
-            return [] 
-        return atom_coordinates
-
-    except Exception as e:
-        raise ValueError(f"Error parsing the PDB structure: {e}")
-
-def _get_random_coordinates(atom_coordinates, coordinate_min, coordinate_max):
-    random_atom_coordinates = np.zeros(atom_coordinates.shape)
-    random_atom_coordinates[:, 0] = \
-        np.random.uniform(coordinate_min[0], coordinate_max[0], size=atom_coordinates.shape[0])
-    random_atom_coordinates[:, 1] = \
-        np.random.uniform(coordinate_min[1], coordinate_max[1], size=atom_coordinates.shape[0])
-    random_atom_coordinates[:, 2] = \
-        np.random.uniform(coordinate_min[2], coordinate_max[2], size=atom_coordinates.shape[0])
-
-    return random_atom_coordinates
-
 def predict_structures(sequences):
     # Ensure the ESMFold model directory is set correctly
     # hub.set_dir(os.getcwd() + os.sep + "./models/esmfold/") # This is often set globally once
@@ -400,125 +163,6 @@ def translate_positive_coordinates(coordinates):
 
     eps = 1e-6
     return [np.float64((coordinate[0] - min_x + eps, coordinate[1] - min_y + eps, coordinate[2] - min_z + eps)) for coordinate in coordinates]
-
-def predict_tertiary_structures(sequences):
-    # Ensure the output directory for PDBs exists
-    pdb_output_path = Path('./output/ESMFold_pdbs/')
-    pdb_output_path.mkdir(parents=True, exist_ok=True)
-
-    pdbs = predict_structures(sequences) # This now returns a list of PDB strings
-    
-    # Use sequence content or index for pdb_names if sequences are strings
-    # If sequences are complex objects, adapt how pdb_name is derived.
-    # Assuming sequences is a list of strings (the peptide sequences themselves)
-    pdb_names = [str(seq)[:30] + "..." if len(str(seq)) > 30 else str(seq) for seq in sequences] # Example naming
-
-    atom_coordinates_matrices = []
-    # tqdm description updated
-    with tqdm(zip(pdb_names, pdbs, sequences), total=len(pdbs), desc="Processing PDBs & extracting coordinates") as progress_bar:
-        for i, (pdb_name_prefix, pdb_str, original_sequence) in enumerate(progress_bar):
-            # Create a more unique PDB name, e.g., using an index or a hash of the sequence
-            unique_pdb_name = f"seq_{i}_{pdb_name_prefix.replace('/', '_').replace(' ', '_')}" # Make name file-system friendly
-            save_pdb(pdb_str, unique_pdb_name, pdb_output_path)
-            
-            coordinates_list = get_atom_coordinates_from_pdb(pdb_str, 'CA')
-            if not coordinates_list:
-                # Handle cases where no CA atoms are found or PDB is problematic
-                # Option 1: Log a warning and append None or an empty array
-                logging.warning(f"No CA coordinates found for sequence {i}: {original_sequence[:30]}... Skipping.")
-                atom_coordinates_matrices.append(np.array([], dtype='float64')) # Or None
-                continue 
-                # Option 2: Raise an error, depending on how critical this is
-                # raise ValueError(f"Failed to get CA coordinates for sequence {i}")
-
-            coordinates_matrix = np.array(coordinates_list, dtype='float64')
-            
-            # Check if coordinates_matrix is empty before translating
-            if coordinates_matrix.size == 0:
-                 logging.warning(f"Empty coordinate matrix for sequence {i} before translation. PDB: {unique_pdb_name}")
-                 atom_coordinates_matrices.append(np.array([], dtype='float64'))
-                 continue
-
-            translated_coordinates = translate_positive_coordinates(coordinates_matrix.tolist()) # tolist() if needed by translate
-            atom_coordinates_matrices.append(np.array(translated_coordinates, dtype='float64'))
-            
-    # Logging info about where PDBs are saved
-    # workflow_logger might not be defined here. Using standard logging.
-    logging.info(f"Predicted tertiary structures saved in: {pdb_output_path.resolve()}")
-    return atom_coordinates_matrices
-
-
-def load_tertiary_structures(sequences):
-    pdb_path = Path('./output/ESMFold_pdbs/') # Default path
-
-    # Check if the path exists, and if not, create it (though load implies they should exist)
-    # pdb_path.mkdir(parents=True, exist_ok=True) # More for saving, but harmless
-
-    if not pdb_path.exists():
-        logging.warning(f"PDB directory {pdb_path} does not exist. Cannot load structures.")
-        # Return a list of Nones or empty arrays, matching the expected output structure
-        return [np.array([], dtype='float64') for _ in sequences] 
-
-    # sequences_to_exclude = pd.DataFrame() # This was for appending rows, better to collect list of indices/sequences
-    excluded_sequences_info = []
-    atom_coordinates_matrices = []
-    
-    # Assuming sequences is a list of sequence strings or identifiers that map to PDB filenames
-    with tqdm(enumerate(sequences), total=len(sequences), desc="Loading PDB files and extracting coordinates") as progress_bar:
-        for i, seq_identifier in progress_bar:
-            # Adapt filename generation to how PDBs were saved by predict_tertiary_structures
-            # If predict_tertiary_structures saves as "seq_0_AGHT...", then load that.
-            # For now, assuming seq_identifier is the direct name used (e.g., from a column).
-            # This needs to be consistent with how PDBs are named during saving.
-            # Let's assume a naming convention like `f"seq_{i}_{str(seq_identifier)[:30]}.pdb"` was used for saving.
-            # Or, if `seq_identifier` itself is the filename base:
-            pdb_file_name = f"{str(seq_identifier)}.pdb" # This was the original assumption
-            # Fallback or more robust naming might be needed if seq_identifier is complex.
-            # Example: pdb_file_name = f"seq_{i}_{str(seq_identifier)[:30].replace('/', '_').replace(' ', '_')}.pdb"
-            
-            pdb_file = pdb_path.joinpath(pdb_file_name)
-
-            try:
-                if not pdb_file.exists():
-                    # logging.warning(f"PDB file not found: {pdb_file}. For sequence: {seq_identifier}")
-                    # Try an alternative name based on index if the above fails (example from predict_tertiary_structures)
-                    alt_pdb_name_prefix = str(seq_identifier)[:30] + "..." if len(str(seq_identifier)) > 30 else str(seq_identifier)
-                    alt_pdb_name = f"seq_{i}_{alt_pdb_name_prefix.replace('/', '_').replace(' ', '_')}.pdb"
-                    pdb_file = pdb_path.joinpath(alt_pdb_name)
-                    if not pdb_file.exists():
-                        logging.warning(f"PDB file still not found: {pdb_file} (tried original and alt name). For sequence: {seq_identifier}")
-                        excluded_sequences_info.append({'index': i, 'identifier': seq_identifier, 'reason': 'PDB file not found'})
-                        atom_coordinates_matrices.append(np.array([], dtype='float64')) # Placeholder for missing
-                        continue
-
-                pdb_str = open_pdb(pdb_file)
-                coordinates_list = get_atom_coordinates_from_pdb(pdb_str, 'CA')
-                
-                if not coordinates_list:
-                    logging.warning(f"No CA coordinates found in {pdb_file} for sequence: {seq_identifier}")
-                    excluded_sequences_info.append({'index': i, 'identifier': seq_identifier, 'reason': 'No CA coordinates'})
-                    atom_coordinates_matrices.append(np.array([], dtype='float64'))
-                    continue
-
-                coordinates_matrix = np.array(coordinates_list, dtype='float64')
-                
-                if coordinates_matrix.size == 0:
-                    logging.warning(f"Empty coordinate matrix from {pdb_file} for sequence: {seq_identifier}")
-                    atom_coordinates_matrices.append(np.array([], dtype='float64'))
-                    continue
-
-                translated_coordinates = translate_positive_coordinates(coordinates_matrix.tolist())
-                atom_coordinates_matrices.append(np.array(translated_coordinates, dtype='float64'))
-            
-            except Exception as e:
-                logging.error(f"Error processing PDB for sequence {seq_identifier} (file: {pdb_file}): {e}")
-                excluded_sequences_info.append({'index': i, 'identifier': seq_identifier, 'reason': str(e)})
-                atom_coordinates_matrices.append(np.array([], dtype='float64')) # Placeholder on error
-
-    if excluded_sequences_info:
-        logging.warning(f"Excluded {len(excluded_sequences_info)} sequences during PDB loading. Details: {excluded_sequences_info}")
-
-    return atom_coordinates_matrices
     
 def esm_embeddings(esm2, esm2_alphabet, peptide_sequence_list_tuples): # Input changed to list of tuples
   # peptide_sequence_list_tuples should be like [('prot1', 'SEQ1'), ('prot2', 'SEQ2')]
@@ -1047,21 +691,20 @@ def _construct_edges(atom_coordinates_matrices, sequences, esm2_contact_maps_lis
 
 
 def get_edges(tertiary_structure_method_flag: bool, # Renamed for clarity
-              sequences: list,
-              # Parameters for edge construction, could be part of a config object
-              edge_construction_types=['distance_based_threshold'], # Default or example
+              sequences: list,uction_types=['distance_based_threshold'], 
               distance_func='euclidean',
               dist_threshold=10.0,
               use_edge_attributes=True,
-              esm2_maps=None): # Optional precomputed ESM2 maps
+              esm2_maps=None,
+              pdb_path=pdb_path): 
 
     if tertiary_structure_method_flag: # True means predict, False means load
         # This implies ESMFold prediction if true
         # Ensure torch.hub.set_dir is called before this if predict_structures uses esm.pretrained
         # It's better to set hub_dir once at the start of the main script.
-        atom_coordinates_matrices = predict_tertiary_structures(sequences)
+        atom_coordinates_matrices = predict_tertiary_structures(sequences,pdb_path)
     else:
-        atom_coordinates_matrices = load_tertiary_structures(sequences)
+        atom_coordinates_matrices = load_tertiary_structures(sequences,pdb_path)
 
     # Ensure atom_coordinates_matrices has one entry per sequence, even if empty/None
     # This is important if some structures failed to load/predict
@@ -2005,7 +1648,7 @@ def generate_esm_embeddings(model_esm, alphabet_esm, sequence_list, output_file_
     return embeddings_df # Return the DataFrame
 
 
-def generate_graphs(sequence_list: list, dataset_df: pd.DataFrame, tertiary_structure_method=False):
+def generate_graphs(sequence_list: list, dataset_df: pd.DataFrame, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs/')):
     """
     Generate graph Data objects for a list of sequences.
     - sequence_list: List of protein/peptide sequences (strings).
@@ -2015,20 +1658,15 @@ def generate_graphs(sequence_list: list, dataset_df: pd.DataFrame, tertiary_stru
     Returns:
     - List of PyTorch Geometric Data objects.
     """
-    # Get adjacency and weight matrices using the refactored get_edges
-    # get_edges needs sequences and other config.
-    # Using default edge construction for now: distance-based.
-    # This part might need more flexible configuration passing.
     adj_matrices, weights_matrices = get_edges(
         tertiary_structure_method_flag=tertiary_structure_method,
         sequences=sequence_list,
-        # Default edge construction params, can be exposed or configured:
         edge_construction_types=['sequence_based', 'distance_based_threshold'], 
         distance_func='euclidean',
         dist_threshold=10.0, # Angstroms
         use_edge_attributes=True,
-        esm2_maps=None # Provide actual maps if 'esm2_contact_map_XX' is used
-    )
+        esm2_maps=None,
+        pdb_path = pdb_path)
 
     graphs_list = []
     num_samples = len(sequence_list)
