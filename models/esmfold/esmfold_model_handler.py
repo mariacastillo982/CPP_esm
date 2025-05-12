@@ -8,7 +8,10 @@ from tqdm import tqdm
 from utils import pdb_parser
 
 def predict_structures(sequences):
-    hub.set_dir(os.getcwd() + os.sep + "models/esmfold/")
+    hub.set_dir(os.getcwd() + os.sep + "./models/esmfold/")
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:64"
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
     model = esm.pretrained.esmfold_v1()
     model = model.eval().cuda()
 
@@ -19,7 +22,6 @@ def predict_structures(sequences):
             pdbs.append(pdb_str)
             progress_bar.update(1)
     return pdbs
-
 
 def _predict(model, sequence):
     with torch.no_grad():

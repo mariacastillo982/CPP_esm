@@ -35,8 +35,8 @@ def load_tertiary_structures(sequences,pdb_path):
                         atom_coordinates_matrices.append(np.array([], dtype='float64')) # Placeholder for missing
                         continue
 
-                pdb_str = open_pdb(pdb_file)
-                coordinates_list = get_atom_coordinates_from_pdb(pdb_str, 'CA')
+                pdb_str = pdb_parser.open_pdb(pdb_file)
+                coordinates_list = pdb_parser.get_atom_coordinates_from_pdb(pdb_str, 'CA')
                 
                 if not coordinates_list:
                     logging.warning(f"No CA coordinates found in {pdb_file} for sequence: {seq_identifier}")
@@ -71,7 +71,7 @@ def predict_tertiary_structures(sequences,pdb_path):
     if not pdb_path.exists():
         pdb_path.mkdir(parents=True)
 
-    pdbs = predict_structures(sequences) # This now returns a list of PDB strings
+    pdbs = esmfold.predict_structures(sequences) # This now returns a list of PDB strings
     pdb_names = [str(seq)[:30] + "..." if len(str(seq)) > 30 else str(seq) for seq in sequences] # Example naming
 
     atom_coordinates_matrices = []
@@ -80,9 +80,9 @@ def predict_tertiary_structures(sequences,pdb_path):
         for i, (pdb_name_prefix, pdb_str, original_sequence) in enumerate(progress_bar):
             # Create a more unique PDB name, e.g., using an index or a hash of the sequence
             unique_pdb_name = f"seq_{i}_{pdb_name_prefix.replace('/', '_').replace(' ', '_')}" # Make name file-system friendly
-            save_pdb(pdb_str, unique_pdb_name, pdb_path)
+            pdb_parser.save_pdb(pdb_str, unique_pdb_name, pdb_path)
             
-            coordinates_list = get_atom_coordinates_from_pdb(pdb_str, 'CA')
+            coordinates_list = pdb_parser.get_atom_coordinates_from_pdb(pdb_str, 'CA')
             if not coordinates_list:
                 # Handle cases where no CA atoms are found or PDB is problematic
                 # Option 1: Log a warning and append None or an empty array
