@@ -3,8 +3,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from models.esmfold import esmfold_model_handler as esmfold
-from utils import pdb_parser, distances, get_atom_coordinates_from_pdb, _get_random_coordinates
-
+from utils import pdb_parser, distances
 
 def load_tertiary_structures(sequences,pdb_path):
 

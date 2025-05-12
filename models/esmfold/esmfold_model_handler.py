@@ -7,13 +7,11 @@ import pandas as pd
 from tqdm import tqdm
 from utils import pdb_parser
 
-
-def predict_structures(data):
+def predict_structures(sequences):
     hub.set_dir(os.getcwd() + os.sep + "models/esmfold/")
     model = esm.pretrained.esmfold_v1()
     model = model.eval().cuda()
 
-    sequences = data.sequence
     with tqdm(range(len(sequences)), total=len(sequences), desc="Generating 3D structure") as progress_bar:
         pdbs = []
         for i, sequence in enumerate(sequences):

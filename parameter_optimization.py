@@ -7,14 +7,10 @@ from functools import partial
 import optuna
 from optuna.trial import Trial
 from datetime import datetime
-
-# Assuming pLM_graph.py is in the same directory or accessible in PYTHONPATH
-from pLM_graph import (
-    train_hybrid_model,
-    test_hybrid_model,
-    generate_esm_embeddings,
-    generate_graphs)
-import esm # For esm.pretrained
+from models.esm2.esm2_model_handler import generate_esm_embeddings
+from graph.construct_graphs import generate_graphs
+from pLM_graph import train_hybrid_model, test_hybrid_model
+import esm 
 
 def make_objective(X,graphs,y,X_test, graphs_test, y_test):
     def objective(trial: Trial):

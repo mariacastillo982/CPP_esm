@@ -11,20 +11,16 @@ from graph.edge_construction_functions import EdgeConstructionContext
 from utils.scrambling import random_coordinate_matrix
 
 
-def get_edges(workflow_settings: ParameterSetter, data: pd.DataFrame, esm2_contact_maps):
-    if workflow_settings.tertiary_structure_method:
-        atom_coordinates_matrices = predict_tertiary_structures(workflow_settings, data)
+def get_edges(tertiary_structure_method, sequences, pdb_path):
+    if tertiary_structure_method:
+        atom_coordinates_matrices = predict_tertiary_structures(sequences, pdb_path)
     else:
-        atom_coordinates_matrices, data = load_tertiary_structures(workflow_settings, data)
-
-    atom_coordinates_matrices = _apply_random_coordinates(workflow_settings, atom_coordinates_matrices, data)
+        atom_coordinates_matrices = load_tertiary_structures(sequences, pdb_path)
 
     adjacency_matrices, weights_matrices = _construct_edges(atom_coordinates_matrices,
-                                                            data['sequence'],
-                                                            esm2_contact_maps,
-                                                            workflow_settings)
+                                                            sequences)
 
-    return adjacency_matrices, weights_matrices, data
+    return adjacency_matrices, weights_matrices
 
 
 def _get_range_for_every_coordinate(atom_coordinates_matrices):
@@ -59,19 +55,22 @@ def _apply_random_coordinates(workflow_settings, atom_coordinates_matrices, data
     return atom_coordinates_matrices
 
 
-def _construct_edges(atom_coordinates_matrices: np.array, sequences: List[str], esm2_contact_maps, workflow_settings: ParameterSetter):
+def _construct_edges(atom_coordinates_matrices, sequences):
+    edge_construction_functions="distance_based_threshold"
+    distance_function="euclidean"
+    distance_threshold=10
+    use_edge_attr=True
     num_cores = multiprocessing.cpu_count()
 
-    if not workflow_settings.use_esm2_contact_map:
-        esm2_contact_maps = [None] * len(atom_coordinates_matrices)
+    esm2_contact_maps = [None] * len(atom_coordinates_matrices)
 
-    args = [(workflow_settings.edge_construction_functions,
-             workflow_settings.distance_function,
-             workflow_settings.distance_threshold,
+    args = [(edge_construction_functions,
+             distance_function,
+             distance_threshold,
              atom_coordinates,
              sequence,
              esm2_contact_map,
-             workflow_settings.use_edge_attr
+             use_edge_attr
              ) for (atom_coordinates, sequence, esm2_contact_map) in
             zip(atom_coordinates_matrices, sequences, esm2_contact_maps)]
 

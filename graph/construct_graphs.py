@@ -5,76 +5,46 @@ import numpy as np
 from workflow.parameters_setter import ParameterSetter
 import torch
 from torch_geometric.data import Data
+from pathlib import Path
 
-
-
-def construct_graphs(workflow_settings: ParameterSetter, data: pd.DataFrame):
+def generate_graphs(sequence_list, dataset, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs/')):
     """
-    construct_graphs
-    :param workflow_settings:
-    :param data: List (id, sequence itself, activity, label)
-    :return:
-        graphs_representations: list of Data
-        labels: list of labels
-        partition: identification of the old_data partition each instance belongs to
+    Generate graphs from sequence data using adjacency and weight matrices.
+
+    Parameters:
+    - sequence_list: List of protein/peptide sequences
+    - dataset: Pandas DataFrame containing labels (if available)
+    - tertiary_structure_method: Boolean flag to determine edge calculation method (default: False)
+
+    Returns:
+    - List of generated graphs
     """
-    # nodes
-    nodes_features, esm2_contact_maps = nodes.esm2_derived_features(workflow_settings, data)
-
-    # edges
-    adjacency_matrices, weights_matrices, data = edges.get_edges(workflow_settings, data, esm2_contact_maps)
-
+    adjacency_matrices, weights_matrices = edges.get_edges(tertiary_structure_method, sequence_list, pdb_path)
     n_samples = len(adjacency_matrices)
-    with tqdm(range(n_samples), total=len(adjacency_matrices), desc="Generating graphs", disable=False) as progress:
-        graphs = []
+    graphs = []
+
+    with tqdm(range(n_samples), total=n_samples, desc="Generating graphs", disable=False) as progress:
         for i in range(n_samples):
-            graphs.append(to_parse_matrix(adjacency_matrix=adjacency_matrices[i],
-                                          nodes_features=np.array(nodes_features[i], dtype=np.float32),
-                                          weights_matrix=weights_matrices[i],
-                                          label=data.iloc[i]['activity'] if 'activity' in data.columns else None))
+            # Create node features (size: sequence length x 10, filled with ones)
+            nodes_features = np.ones((len(sequence_list[i]), 10), dtype=np.float32)
+
+            # Extract label if available in dataset
+            label = dataset.iloc[i]['label'] if 'label' in dataset.columns else None
+
+            # Convert adjacency matrix and features into graph object
+            graph = to_parse_matrix(
+                adjacency_matrix=adjacency_matrices[i],
+                nodes_features=nodes_features,
+                weights_matrix=weights_matrices[i],
+                label=label
+            )
+
+            graphs.append(graph)
             progress.update(1)
 
-    return graphs, data
-
-def construct_graphs2(workflow_settings: ParameterSetter, data: pd.DataFrame):
-    """
-    construct_graphs
-    :param workflow_settings:
-    :param data: List (id, sequence itself, activity, label)
-    :return:
-        graphs_representations: list of Data
-        labels: list of labels
-        partition: identification of the old_data partition each instance belongs to
-    """
-    # nodes
-    #nodes_features, esm2_contact_maps = nodes.esm2_derived_features(workflow_settings, data)
-    esm2_contact_maps
-    # edges = []
-    adjacency_matrices, weights_matrices, data = edges.get_edges(workflow_settings, data, esm2_contact_maps)
-
-    n_samples = len(adjacency_matrices)
-    nodes_features = np.ones(n_samples)
-    with tqdm(range(n_samples), total=len(adjacency_matrices), desc="Generating graphs", disable=False) as progress:
-        graphs = []
-        for i in range(n_samples):
-            graphs.append(to_parse_matrix(adjacency_matrix=adjacency_matrices[i],
-                                          nodes_features=np.array(nodes_features[i], dtype=np.float32),
-                                          weights_matrix=weights_matrices[i],
-                                          label=data.iloc[i]['label'] if 'label' in data.columns else None))
-            progress.update(1)
-
-    return graphs, data
+    return graphs
 
 def to_parse_matrix(adjacency_matrix, nodes_features, weights_matrix, label, eps=1e-6):
-    """
-    :param label: label
-    :param adjacency_matrix: Adjacency matrix with shape (n_nodes, n_nodes)
-    :param weights_matrix: Edge matrix with shape (n_nodes, n_nodes, n_edge_features)
-    :param nodes_features: node embedding with shape (n_nodes, n_node_features)
-    :param eps: default eps=1e-6
-    :return:
-    """
-
     num_row, num_col = adjacency_matrix.shape
     rows = []
     cols = []
@@ -95,6 +65,7 @@ def to_parse_matrix(adjacency_matrix, nodes_features, weights_matrix, label, eps
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
     data.validate(raise_on_error=True)
     return data
+
 
 def pad_or_truncate(features, fixed_length):
     """Pads or truncates feature vectors to ensure uniform length."""
