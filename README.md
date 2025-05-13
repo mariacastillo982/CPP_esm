@@ -11,8 +11,6 @@ This repository contains the code for a project that utilizes protein language m
     *   [3.2. Training and Testing a Single Model Instance](#32-training-and-testing-a-single-model-instance)
     *   [3.3. Statistical Significance Testing](#33-statistical-significance-testing)
 4.  [Output Files](#output-files)
-5.  [Directory Structure](#directory-structure)
-6.  [Dependencies](#dependencies)
 
 ## 1. Installation
 
