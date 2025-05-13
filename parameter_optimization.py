@@ -7,6 +7,7 @@ from functools import partial
 import optuna
 from optuna.trial import Trial
 from datetime import datetime
+from pathlib import Path # Added for Path object usage
 from models.esm2.esm2_model_handler import generate_esm_embeddings
 from graph.construct_graphs import generate_graphs
 from pLM_graph import train_hybrid_model, test_hybrid_model
@@ -40,8 +41,18 @@ if __name__ == "__main__":
     # Create a unique file name for logging CSV outputs from Optuna if needed by train_and_evaluate_model
     # log_filename_optuna = f"optuna_run_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
+    # Define base input path
+    input_base_path = Path("input")
+    input_base_path.mkdir(parents=True, exist_ok=True) # Ensure input directory exists
+
+    output_base_path = Path("output") # For consistency if PDBs were generated
+    esmfold_pdb_path_train_val = output_base_path / "ESMFold_pdbs"
+    esmfold_pdb_path_test = output_base_path / "ESMFold_pdbs_kelm"
+
+
     # whole dataset loading and dataset splitting
-    dataset_train_val = pd.read_excel('./Final_non_redundant_sequences.xlsx',na_filter = False) # take care the NA sequence problem
+    train_val_excel_file = input_base_path / 'Final_non_redundant_sequences.xlsx'
+    dataset_train_val = pd.read_excel(train_val_excel_file, na_filter=False)
 
     # generate the peptide embeddings for training/validation set
     sequence_list_train_val = dataset_train_val['sequence']
@@ -56,31 +67,34 @@ if __name__ == "__main__":
     model_esm_embed, alphabet_esm_embed = esm.pretrained.esm2_t33_650M_UR50D()
     
     # Check if embedding file exists, else generate
-    train_val_embeddings_file = './whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    train_val_embeddings_file = input_base_path / 'whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
     if os.path.exists(train_val_embeddings_file):
         print(f"Loading existing train/val embeddings from {train_val_embeddings_file}")
         X_train_val_data = pd.read_csv(train_val_embeddings_file,header=0, index_col = 0,delimiter=',')
     else:
         print(f"Generating train/val embeddings and saving to {train_val_embeddings_file}")
-        X_train_val_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_train_val, train_val_embeddings_file)
+        X_train_val_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_train_val, str(train_val_embeddings_file))
     
     X_train_val = np.array(X_train_val_data)
     y_train_val = np.array(dataset_train_val['label'])
 
-    graphs_train_val = generate_graphs(sequence_list_train_val, dataset_train_val, tertiary_structure_method=False)
+    # Pass the specific PDB path for train/val if tertiary_structure_method=True were used, otherwise default is fine.
+    # For consistency with other scripts, explicitly pass it.
+    graphs_train_val = generate_graphs(sequence_list_train_val, dataset_train_val, tertiary_structure_method=False, pdb_path=esmfold_pdb_path_train_val)
 
     # Load test dataset
-    dataset_test = pd.read_excel('./kelm.xlsx',na_filter = False) # take care the NA sequence 
+    test_excel_file = input_base_path / 'kelm.xlsx'
+    dataset_test = pd.read_excel(test_excel_file, na_filter=False)
     sequence_list_test = dataset_test['sequence']
     
     # get embeddings for testing
-    test_embeddings_file = './kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    test_embeddings_file = input_base_path / 'kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
     if os.path.exists(test_embeddings_file):
         print(f"Loading existing test embeddings from {test_embeddings_file}")
         X_test_data = pd.read_csv(test_embeddings_file,header=0, index_col = 0,delimiter=',')
     else:
         print(f"Generating test embeddings and saving to {test_embeddings_file}")
-        X_test_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_test, test_embeddings_file)
+        X_test_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_test, str(test_embeddings_file))
         
     X_test = np.array(X_test_data)
     y_test = np.array(dataset_test['label'])
@@ -92,8 +106,8 @@ if __name__ == "__main__":
     X_train_val_scaled = scaler.transform(X_train_val)
     X_test_scaled = scaler.transform(X_test)
 
-    # get graphs for testing
-    graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False)
+    # Pass the specific PDB path for test if tertiary_structure_method=True were used.
+    graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False, pdb_path=esmfold_pdb_path_test)
 
     # Optuna study
     study = optuna.create_study(direction="maximize") # Or "minimize" if optimizing loss

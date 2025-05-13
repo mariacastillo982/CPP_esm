@@ -1,0 +1,20 @@
+
+## 6. Dependencies
+
+Key libraries include:
+
+*   Python 3.7 (as per `environment.yml`)
+*   PyTorch (`torch`)
+*   PyTorch Geometric (`torch_geometric`)
+*   ESM (Facebook Research) (`fair-esm`)
+*   Optuna
+*   Pandas
+*   NumPy
+*   Scikit-learn (`sklearn`)
+*   Matplotlib
+*   SciPy
+*   BioPython
+*   tqdm
+*   tensorboardX (or `torch.utils.tensorboard`)
+
+All dependencies are listed in `environment.yml`. It's highly recommended to use this file to create the Conda environment.
