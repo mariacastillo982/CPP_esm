@@ -95,11 +95,11 @@ To find optimal hyperparameters for the Hybrid (CNN+GAT) model for retraining or
     *   Displays the best trial's value (metric) and corresponding hyperparameters.
     *   Trains and tests a final model using these best parameters and prints its performance.
 
-### 3.2. Training and Testing a Single Model Instance
+### 3.2. Training and Testing Model
 
-To train and evaluate the CNN-only model and the Hybrid (CNN+GAT) model using a fixed set of hyperparameters (as defined in the `if __name__ == '__main__':` block of `pLM_graph.py`):
+To train and evaluate the pLM (CNN-only) model and the pLM + Graph (CNN+GAT) model using a fixed set of hyperparameters (as defined in the `if __name__ == '__main__':` block of `pLM_graph.py`):
 
-1.  **Purpose:** Perform a single training and testing cycle for both the standalone CNN model and the Hybrid CNN+GAT model. This is useful for quick evaluations or reproducing results with known parameters.
+1.  **Purpose:** Perform a single training and testing cycle for both the standalone pLM model and the pLM + Graph model. This is useful for quick evaluations or reproducing results with known parameters.
 2.  **Command:**
     ```bash
     python pLM_graph.py
@@ -107,8 +107,8 @@ To train and evaluate the CNN-only model and the Hybrid (CNN+GAT) model using a 
 3.  **Process:**
     *   Loads training/validation data (`input/Final_non_redundant_sequences.xlsx`) and test data (`input/kelm.xlsx`).
     *   Generates/loads ESM2 embeddings from/to `input/` and graph structures. Normalizes features.
-    *   **CNN Model:** Trains `Conv1DClassifier`. Outputs training progress, validation metrics (including MCC optimization for threshold), and final test metrics. Saves results and ROC curves to the `output/` directory.
-    *   **Hybrid Model (CNN+GAT):** Trains `HybridModel` using predefined hyperparameters (e.g., `lr: 0.000572, gat_hidden: 160, alpha: 0.4`, etc., taken from `params` dictionary). Outputs training progress, validation metrics, and final test metrics. Saves results to the `output/` directory. ROC curve plotting for the hybrid model on the test set is available in `test_hybrid_model` but might be commented out by default.
+    *   **pLM Model:** Trains `Conv1DClassifier`. Outputs training progress, validation metrics (including MCC optimization for threshold), and final test metrics. Saves results and ROC curves to the `output/` directory.
+    *   **pLM + Graph Model (CNN+GAT):** Trains `HybridModel` using predefined hyperparameters (e.g., `lr: 0.0005, gat_hidden: 160, alpha: 0.4`, etc., taken from `params` dictionary). Outputs training progress, validation metrics, and final test metrics. Saves results to the `output/` directory. ROC curve plotting for the hybrid model on the test set is available in `test_hybrid_model` but might be commented out by default.
 4.  **Output:**
     *   Console logs: Training progress and evaluation metrics.
     *   CSV files in `output/`:
@@ -134,8 +134,8 @@ To reproduce statistical test results comparing the Hybrid model against the CNN
     *   Loads data and prepares embeddings/graphs similarly to `pLM_graph.py` (using the `input/` directory).
     *   Uses the same fixed hyperparameters for the Hybrid model as in `pLM_graph.py`.
     *   For `n_runs`:
-        *   Trains and tests the Hybrid model, collecting its test metrics.
-        *   Trains and tests the CNN model, collecting its test metrics.
+        *   Trains and tests the pLM + Graph model, collecting its test metrics.
+        *   Trains and tests the pLM model, collecting its test metrics.
         *   Each run involves a fresh train/validation split from the full training data, and evaluation on the fixed test set.
     *   Calculates and prints aggregate statistics (mean, SD, 95% CI) for each metric for both models.
     *   Performs a paired t-test on the collected metrics for each run to compare the two models.
