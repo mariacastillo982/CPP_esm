@@ -1,10 +1,32 @@
+# macOS system files
 *.DS_Store
+
+# Python bytecode and caches
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# PyTorch model files
 *.pt
+
+# Jupyter notebook checkpoints
 **/.ipynb_checkpoints/
-<<<<<<< HEAD
+
+# Aider temporary files (AI-assisted dev)
 .aider*
-=======
+
+# Output files
 *.out
+
+# Data files (adjust or generalize as needed)
 whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv
->>>>>>> e139df6d67fda53e6cbc806fd84af0327cddb18e
+
+# VSCode settings (if applicable)
+.vscode/
+
+# Virtual environment directories
+env/
+venv/
+.colabfold-conda/
+colabfold-conda/
