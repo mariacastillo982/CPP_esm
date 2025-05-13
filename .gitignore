@@ -17,6 +17,7 @@ __pycache__/
 .aider*
 
 # Output files
+**/output/
 *.out
 
 # Data files (adjust or generalize as needed)
