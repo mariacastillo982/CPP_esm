@@ -736,8 +736,8 @@ if __name__ == '__main__':
     graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs_kelm/'))
     
     params = {
-         "lr": 0.0005, "gat_hidden": 160, "batch_size": 64, 
-         "pos_weight_val": 3.0, "num_layers": 3, "alpha": 0.4}
+         "lr": 0.000572, "gat_hidden": 160, "batch_size": 96, 
+         "pos_weight_val": 3.5, "num_layers": 3, "alpha": 0.4}
     print("\nRunning a single Hybrid model train/test cycle with fixed parameters...")
     
     print("---------------------------- Training & Testing CNN ----------------------------:")
