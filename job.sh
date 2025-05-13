@@ -6,6 +6,8 @@
 #SBATCH --gpus=1
 #SBATCH --time=06:00:00
 #SBATCH --mail-type=ALL
+#SBATCH --output=out/%x-%j-slurm.out
+#SBATCH --error=err/%x-%j-slurm.err
 
 module purge
 #module load openfold/1.0.1
