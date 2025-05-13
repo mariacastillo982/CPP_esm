@@ -19,14 +19,14 @@ This repository contains the code for a project that utilizes protein language m
 1.  **Clone the Repository:**
     ```bash
     git clone <repository-url>
-    cd <repository-name>
+    cd CPP_esm
     ```
 
 2.  **Set up Conda Environment:**
     Use the `environment.yml` file to create a Conda environment with all necessary dependencies.
     ```bash
     conda env create -f environment.yml
-       conda activate CPP_pred # Name specified in environment.yml
+       conda activate CPP_esm # Name specified in environment.yml
     ```
 
 3.  **CUDA (for GPU usage):**
