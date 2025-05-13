@@ -35,7 +35,8 @@ from sklearn.metrics import (
 from tqdm import tqdm
 from Bio.PDB import PDBParser
 from Bio.PDB.PDBExceptions import PDBConstructionWarning
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
+#from torch.utils.tensorboard import SummaryWriter
 from itertools import product
 import matplotlib.pyplot as plt
 import scipy.stats as stats
@@ -94,7 +95,7 @@ def plot_roc_curve(val_labels,val_scores, save_path):
     plt.savefig(save_path, dpi=300)
     plt.close()
     
-def compare_roc_curves(scores_1, labels_1, scores_2, labels_2, name_1='Method 1', name_2='Method 2', save_path="roc_comparison.png"):
+def compare_roc_curves(scores_1, labels_1, scores_2, labels_2, name_1='Method 1', name_2='Method 2', save_path="output/roc_comparison.png"):
     # Convert to numpy
     scores_1 = scores_1.detach().cpu().numpy().flatten() if isinstance(scores_1, torch.Tensor) else scores_1.flatten()
     scores_2 = scores_2.detach().cpu().numpy().flatten() if isinstance(scores_2, torch.Tensor) else scores_2.flatten()
@@ -310,7 +311,7 @@ def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, device='cud
         scheduler.step()
 
     model.load_state_dict(best_model_wts) # Load best model weights
-    save_metrics_to_csv(metrics_log_cnn, "training_validation_results_CNN.csv")
+    save_metrics_to_csv(metrics_log_cnn, "output/training_validation_results_CNN.csv")
     
     # Final Test Evaluation using the best model from validation
     model.eval()
@@ -343,15 +344,15 @@ def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, device='cud
     # Plotting (using validation data as example, or test data)
     val_y_cpu_plot = val_y_tensor.cpu().numpy().flatten()
     val_scores_cpu_plot = val_scores_probs.cpu().numpy().flatten()
-    plot_roc_curve(val_y_cpu_plot, val_scores_cpu_plot, "roc_auc_validation_cnn.png")
+    plot_roc_curve(val_y_cpu_plot, val_scores_cpu_plot, "output/roc_auc_validation_cnn.png")
     # plot_output_scores(val_scores_cpu_plot, val_y_cpu_plot, "plot_scores_validation_cnn.png")
     
     test_y_cpu_plot = test_y_tensor.cpu().numpy().flatten()
     test_scores_cpu_plot = test_scores_probs.cpu().numpy().flatten()
-    plot_roc_curve(test_y_cpu_plot, test_scores_cpu_plot, "roc_auc_testing_cnn.png")
+    plot_roc_curve(test_y_cpu_plot, test_scores_cpu_plot, "output/roc_auc_testing_cnn.png")
     # plot_output_scores(test_scores_cpu_plot, test_y_cpu_plot, "plot_scores_testing_cnn.png")
     
-    save_metrics_to_csv(metrics_test_final, "testing_results_CNN.csv")
+    save_metrics_to_csv(metrics_test_final, "output/testing_results_CNN.csv")
     
     # Return model, validation y and scores, test y and scores, and test metrics
     return model, val_y_cpu_plot, val_scores_cpu_plot, test_y_cpu_plot, test_scores_cpu_plot, metrics_test_final
@@ -401,38 +402,37 @@ def specificity(y_true, y_pred):
 
 class HybridModel(nn.Module):
     def __init__(self, cnn_input_channels=1, cnn_seq_len=1280,
-                 node_feature_dimension=10, gat_hidden=128, # GAT hidden dim for its internal layers
-                 alpha=0.5, num_layers=3, # num_layers for GAT
-                 gat_output_dim=1, # GAT branch should output 1 logit
-                 gat_dropout=0.3, gat_heads=8, gat_k_ratio=0.1): # k_ratio for TopKPooling, e.g. 0.1 for 10%
+                 node_feature_dimension=10, gat_hidden=128,
+                 alpha=0.5, num_layers=3):
         super(HybridModel, self).__init__()
-        
-        # CNN Branch
-        self.cnn_branch = Conv1DClassifier(input_shape_tuple=(cnn_seq_len, cnn_input_channels))
-        
-        self.gat_branch = GATModel(
-            node_feature_dim=node_feature_dimension, 
-            hidden_dim=gat_hidden, # This is hidden_dim for GAT's own MLP
-            output_dim=gat_output_dim, # GAT branch outputs 1 logit
-            drop=gat_dropout, 
-            heads=gat_heads, 
-            k_ratio=gat_k_ratio, # k_ratio for TopKPooling
-            add_self_loops=False, # As per original GATModel call
-            num_layers=num_layers
-        )
+        self.cnn_branch = Conv1DClassifier((cnn_seq_len, cnn_input_channels))
+        self.gat_branch = GATModel(node_feature_dimension, gat_hidden, 1, 0.3, 8, 10, False, num_layers)
 
-        self.alpha = alpha  # Weight for combining outputs (if weighted average)
+        self.alpha = alpha  # weight for combining outputs
 
-    def forward(self, cnn_input, gat_node_features, gat_edge_index, gat_edge_attr, gat_batch):
+        #self.fc1 = nn.Linear(2, mlp_hidden)
+        #self.dropout = nn.Dropout(0.3)
+        #self.fc2 = nn.Linear(mlp_hidden, 1)
+
+    def forward(self, cnn_input, gat_input, edge_index, edge_attr, batch):
         # CNN branch forward pass
-        cnn_output_logits = self.cnn_branch(cnn_input)  # Shape: (batch_size, 1)
+        cnn_output = self.cnn_branch(cnn_input)  # (batch_size, 1)
         
-        effective_gat_edge_attr = gat_edge_attr if gat_edge_attr is not None and gat_edge_attr.numel() > 0 else None
-        gat_output_logits, _ = self.gat_branch(gat_node_features, gat_edge_index, effective_gat_edge_attr, gat_batch)
+        # GAT branch forward pass
+        gat_output, _ = self.gat_branch(gat_input, edge_index, edge_attr, batch)  # (batch_size, 1)
+        #gat_output, _ = self.gat_branch(gat_input, edge_index, None, batch)  # (batch_size, 1)
+
+        # Combine the two outputs using weighted average
+        x = self.alpha * gat_output + (1 - self.alpha) * cnn_output
         
-        combined_logits = self.alpha * gat_output_logits + (1 - self.alpha) * cnn_output_logits
+        # Combine CNN and GAT outputs
+        #combined_output = torch.cat([cnn_output, gat_output], dim=1)  # Concatenate along feature dimension
         
-        return combined_logits
+        # Pass the combined output through an MLP
+        #x = F.relu(self.fc1(combined_output))
+        ##x = torch.sigmoid(self.fc2(x))  # Binary classification
+        #x = self.fc2(x)
+        return x
     
 def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, alpha=0.5, device='cuda:0'): # Renamed inputs
     
@@ -588,7 +588,7 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, a
         scheduler.step()
 
     model.load_state_dict(best_model_wts) # Load the best model weights found during validation
-    save_metrics_to_csv(metrics_log_hybrid, "training_validation_results_Hybrid_CNN_GAT.csv")
+    save_metrics_to_csv(metrics_log_hybrid, "output/training_validation_results_Hybrid_CNN_GAT.csv")
     
     model.eval()
     with torch.no_grad():
@@ -670,7 +670,7 @@ def test_hybrid_model(model, X_test_embed, graphs_test_list, y_test_labels, devi
     # plot_roc_curve(test_y_cpu_plot, test_scores_cpu_plot, "roc_auc_testing_hybrid.png")
     
     print(f"Test Hybrid: Acc: {accuracy_test:.4f}, Precision: {precision_test:.4f}, Sensitivity: {recall_test:.4f}, Specificity: {specificity_test:.4f}, AUC: {auc_test:.4f}, MCC: {mcc_test_hybrid:.4f}")
-    save_metrics_to_csv(metrics_test_hybrid, "testing_results_Hybrid_CNN_GAT.csv")
+    save_metrics_to_csv(metrics_test_hybrid, "output/testing_results_Hybrid_CNN_GAT.csv")
     
     # Return: metrics dict, predictions (binary), true labels (numpy), scores (probabilities)
     return metrics_test_hybrid, y_preds_final_test.numpy().flatten(), test_y_cpu_plot, test_scores_cpu_plot
@@ -707,7 +707,7 @@ if __name__ == '__main__':
     X_train_val = np.array(X_train_val_data)
     y_train_val = np.array(dataset_train_val['label'])
     
-        graphs_train_val = generate_graphs(sequence_list_train_val, dataset_train_val, tertiary_structure_method=True, pdb_path = Path('./output/ESMFold_pdbs/'))
+    graphs_train_val = generate_graphs(sequence_list_train_val, dataset_train_val, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs/'))
     
     # Load test dataset
     dataset_test = pd.read_excel('./kelm.xlsx',na_filter = False) # take care the NA sequence 
@@ -733,7 +733,7 @@ if __name__ == '__main__':
     X_test_scaled = scaler.transform(X_test)
 
     # get graphs for testing
-    graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=Truecd, pdb_path = Path('./output/ESMFold_pdbs/'))
+    graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs_kelm/'))
     
     params = {
          "lr": 0.0005, "gat_hidden": 160, "batch_size": 64, 
