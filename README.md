@@ -147,7 +147,23 @@ Most output files are saved in the `output/` directory. This directory will be c
     *   `output/ESMFold_pdbs/`
     *   `output/ESMFold_pdbs_kelm/`
 
-## 5. Directory Structure (Overview)
+## 5. Dependencies
 
-A typical directory structure would look like this:
+Key libraries include:
+
+*   Python 3.7
+*   PyTorch 
+*   PyTorch Geometric 
+*   ESM (Facebook Research) (`fair-esm`)
+*   Optuna
+*   Pandas
+*   NumPy
+*   Scikit-learn 
+*   Matplotlib
+*   SciPy
+*   BioPython
+*   tqdm
+*   tensorboardX (or `torch.utils.tensorboard`)
+
+All dependencies are listed in `environment.yml`. 
 
