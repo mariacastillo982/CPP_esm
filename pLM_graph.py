@@ -682,7 +682,7 @@ if __name__ == '__main__':
     print("For hyperparameter optimization, run parameter_optimization.py.")
     
     # whole dataset loading and dataset splitting
-    dataset_train_val = pd.read_excel('./Final_non_redundant_sequences.xlsx',na_filter = False) 
+    dataset_train_val = pd.read_excel('input/Final_non_redundant_sequences.xlsx',na_filter = False) 
     # generate the peptide embeddings
     sequence_list_train_val = dataset_train_val['sequence']
     
@@ -696,7 +696,7 @@ if __name__ == '__main__':
     model_esm_embed, alphabet_esm_embed = esm.pretrained.esm2_t33_650M_UR50D()
     
     # Check if embedding file exists, else generate
-    train_val_embeddings_file = './whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    train_val_embeddings_file = 'input/whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
     if os.path.exists(train_val_embeddings_file):
         print(f"Loading existing train/val embeddings from {train_val_embeddings_file}")
         X_train_val_data = pd.read_csv(train_val_embeddings_file,header=0, index_col = 0,delimiter=',')
@@ -710,11 +710,11 @@ if __name__ == '__main__':
     graphs_train_val = generate_graphs(sequence_list_train_val, dataset_train_val, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs/'))
     
     # Load test dataset
-    dataset_test = pd.read_excel('./kelm.xlsx',na_filter = False) # take care the NA sequence 
+    dataset_test = pd.read_excel('input/kelm.xlsx',na_filter = False) # take care the NA sequence 
     sequence_list_test = dataset_test['sequence']
     
     # get embeddings for testing
-    test_embeddings_file = './kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    test_embeddings_file = 'input/kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
     if os.path.exists(test_embeddings_file):
         print(f"Loading existing test embeddings from {test_embeddings_file}")
         X_test_data = pd.read_csv(test_embeddings_file,header=0, index_col = 0,delimiter=',')
