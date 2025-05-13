@@ -18,7 +18,7 @@ This repository contains the code for a project that utilizes protein language m
 
 1.  **Clone the Repository:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/mariacastillo982/CPP_esm.git
     cd CPP_esm
     ```
 
