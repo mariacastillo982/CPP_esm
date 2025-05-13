@@ -32,6 +32,24 @@ This repository contains the code for a project that utilizes protein language m
 3.  **CUDA (for GPU usage):**
     The scripts are configured to use CUDA if available (e.g., `device='cuda:0'`). Ensure you have a compatible NVIDIA driver and CUDA toolkit installed if you plan to use a GPU. The PyTorch version in `environment.yml` is CUDA-enabled.
 
+4.  **Key libraries include:**
+
+*   Python 3.7
+*   PyTorch 
+*   PyTorch Geometric 
+*   ESM (Facebook Research) (`fair-esm`)
+*   Optuna
+*   Pandas
+*   NumPy
+*   Scikit-learn 
+*   Matplotlib
+*   SciPy
+*   BioPython
+*   tqdm
+*   tensorboardX (or `torch.utils.tensorboard`)
+
+All dependencies are listed in `environment.yml`. 
+
 ## 2. Data Preparation
 
 1.  **Input Datasets:**
@@ -147,23 +165,4 @@ Most output files are saved in the `output/` directory. This directory will be c
     *   `output/ESMFold_pdbs/`
     *   `output/ESMFold_pdbs_kelm/`
 
-## 5. Dependencies
-
-Key libraries include:
-
-*   Python 3.7
-*   PyTorch 
-*   PyTorch Geometric 
-*   ESM (Facebook Research) (`fair-esm`)
-*   Optuna
-*   Pandas
-*   NumPy
-*   Scikit-learn 
-*   Matplotlib
-*   SciPy
-*   BioPython
-*   tqdm
-*   tensorboardX (or `torch.utils.tensorboard`)
-
-All dependencies are listed in `environment.yml`. 
 
