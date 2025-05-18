@@ -199,10 +199,10 @@ def save_metrics_to_csv(metrics_list, filename):
 
 
     
-def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, device='cuda'): # Renamed inputs for clarity
+def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, random_state, device='cuda'): # Renamed inputs for clarity
     
     # Split the provided X_full, y_full into training and validation sets
-    X_train, X_val, y_train, y_val = train_test_split(X_full, y_full, test_size=0.2, random_state=123, stratify=y_full if np.sum(y_full)>1 else None) # Stratify if possible
+    X_train, X_val, y_train, y_val = train_test_split(X_full, y_full, test_size=0.2, random_state=random_state, stratify=y_full if np.sum(y_full)>1 else None) # Stratify if possible
 
     # Assuming X_train, X_val, X_test_final are numpy arrays of embeddings
     # y_train, y_val, y_test_final are numpy arrays of labels
@@ -434,12 +434,12 @@ class HybridModel(nn.Module):
         #x = self.fc2(x)
         return x
     
-def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, alpha=0.5, device='cuda:0'): # Renamed inputs
+def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, random_state, alpha=0.5, device='cuda:0', ): # Renamed inputs
     
     y_full_labels_np = np.array(y_full_labels) if not isinstance(y_full_labels, np.ndarray) else y_full_labels
     
     indices_full = np.arange(len(y_full_labels_np))
-    train_idx, val_idx = train_test_split(indices_full, test_size=0.2, random_state=123, stratify=y_full_labels_np if np.sum(y_full_labels_np)>1 else None) # Stratify if possible
+    train_idx, val_idx = train_test_split(indices_full, test_size=0.2, random_state=random_state, stratify=y_full_labels_np if np.sum(y_full_labels_np)>1 else None) # Stratify if possible
 
     # Split embeddings
     X_train_embed = X_full_embed[train_idx]
@@ -737,14 +737,16 @@ if __name__ == '__main__':
     
     params = {
          "lr": 0.000572, "gat_hidden": 160, "batch_size": 96, 
-         "pos_weight_val": 3.5, "num_layers": 3, "alpha": 0.4}
+         "pos_weight_val": 3.5, "num_layers": 3, "alpha": 0.6}
     print("\nRunning a single Hybrid model train/test cycle with fixed parameters...")
-    
+    from numpy import random
+
+    seed = random.randint(100)
     print("---------------------------- Training & Testing CNN ----------------------------:")
-    model_CNN, val_y_cnn, val_score_cnn, test_y_cnn, test_score_cnn, metrics_CNN = train_test_CNN_model(X_train_val, y_train_val, X_test, y_test, device='cuda')
+    model_CNN, val_y_cnn, val_score_cnn, test_y_cnn, test_score_cnn, metrics_CNN = train_test_CNN_model(X_train_val, y_train_val, X_test, y_test, seed, device='cuda')
     
     print("---------------------------- Training CNN + GAT----------------------------:")    
-    model,val_y_gat,val_score_gat, metrics_val = train_hybrid_model(X_train_val, graphs_train_val, y_train_val, params, alpha=0.4, device='cuda')
+    model,val_y_gat,val_score_gat, metrics_val = train_hybrid_model(X_train_val, graphs_train_val, y_train_val, params, seed, alpha=0.6, device='cuda')
     print("---------------------------- Testing CNN + GAT----------------------------:")  
     metrics_GAN, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
 

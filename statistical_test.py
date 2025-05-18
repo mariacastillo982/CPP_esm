@@ -46,6 +46,66 @@ from models.esm2.esm2_model_handler import generate_esm_embeddings
 from models.GAT.GAT import Conv1DClassifier, GATModel
 from graph.tertiary_structure_handler import load_tertiary_structures, predict_tertiary_structures
 from pLM_graph import train_hybrid_model, test_hybrid_model, train_test_CNN_model
+from numpy import random
+
+def non_parametric_bootstrap(x, f, nsim=1000, **kwargs):
+    """
+    Params:
+    x, y - data (numpy arrays)
+    f - test function to calculate
+    nsim - number of simulations to run
+    """
+    statistic = np.zeros(nsim)
+    for i in range(nsim):
+        # simulate x
+        indices = np.random.randint(0, len(x), len(x))
+        X = x[indices]
+        #X += np.random.normal(0, 0.05, len(x))
+        
+        statistic[i] = f(X, **kwargs)
+    
+    return statistic
+
+def print_mean_and_confidence_intervals(btstrp):
+    btstrp = np.sort(btstrp)
+    mean = btstrp.mean()
+    message = "Mean = {0:.2g}; CI = [{1:.2g}, {2:.2g}]"
+    five = int(np.floor(0.05*len(btstrp)))
+    ninetyfive = int(np.floor(0.95*len(btstrp)))
+    print(message.format(mean, btstrp[five], btstrp[ninetyfive]))
+
+def difference_of_means(x, y):
+    """Calculate the difference in the means of two datasets x and y. Returns a scalar equal to mean(y) - mean(x)"""
+    return np.mean(y) - np.mean(x)
+
+def test_null(x, y, statistic, iters=1000):
+    """
+    Given two datasets, test a null hypothesis using a permutation test for a given statistic.
+    
+    Params:
+    x, y -- ndarrays, the data
+    statistic -- a function of x and y
+    iters -- number of times to bootstrap
+    
+    Ouput:
+    a numpy array containing the bootstrapped statistic
+    """
+    def permute(x, y):
+        """Given two datasets, return randomly shuffled versions of them"""
+        # concatenate the data
+        new = np.concatenate([x, y])
+        # shuffle the data
+        np.random.shuffle(new)
+        # return the permuted data sets:
+        return new[:len(x)], new[len(x):]
+
+    # do the bootstrap
+    return np.array([statistic(*permute(x, y)) for _ in range(iters)])
+
+def difference_of_variance(x, y):
+    """Calculates the difference in variance between x and y."""
+    
+    return np.std(y)**2 - np.std(x)**2
 
 def evaluate_model_multiple_runs(n_runs, model_type='hybrid', X_train=None, graphs=None, y_train=None, X_test=None, graphs_test=None, y_test=None, params=None, device='cuda'):
     """
@@ -67,15 +127,16 @@ def evaluate_model_multiple_runs(n_runs, model_type='hybrid', X_train=None, grap
     
     for run in range(n_runs):
         print(f"\n--- Run {run + 1}/{n_runs} ---")
-        
+
+        seed = random.randint(100)
         if model_type == 'hybrid':
             # Train and test hybrid model (CNN + GAT)
-            model, _, _, _ = train_hybrid_model(X_train, graphs, y_train, params, alpha=0.5, device=device)
+            model, _, _, _ = train_hybrid_model(X_train, graphs, y_train, params, seed, alpha=0.5, device=device)
             metrics, _, _, _ = test_hybrid_model(model, X_test, graphs_test, y_test, device=device)
             #metrics=metrics_[0]
         elif model_type == 'CNN':
             # Train and test CNN model
-            _, _, _, _, _, metrics = train_test_CNN_model(X_train, y_train, X_test, y_test, device=device)
+            _, _, _, _, _, metrics = train_test_CNN_model(X_train, y_train, X_test, y_test, seed, device=device)
         else:
             raise ValueError("model_type must be 'hybrid' or 'CNN'")
         
@@ -83,41 +144,64 @@ def evaluate_model_multiple_runs(n_runs, model_type='hybrid', X_train=None, grap
         for name in metric_names:
             all_metrics[name].append(metrics[0][name])
     
-    # Compute statistics for each metric
-    results = {}
-    for name in metric_names:
-        values = all_metrics[name]
-        mean = np.mean(values)
-        std_dev = np.std(values, ddof=1)  # Sample SD
-        
-        # 95% CI (t-distribution for small samples)
-        n = len(values)
-        t_value = stats.t.ppf(0.975, df=n-1)
-        margin_of_error = t_value * (std_dev / np.sqrt(n))
-        ci_lower = mean - margin_of_error
-        ci_upper = mean + margin_of_error
-        
-        results[name] = {
-            'mean': mean,
-            'std_dev': std_dev,
-            'ci_95': (ci_lower, ci_upper),
-            'all_values': values  # Optional: Store raw values
-        }
+    return all_metrics
+
+
+def print_results(model_name1, model_name2, result1, result2):
+    ## The Mann-Whitney U test for equality of distributions
+    pvalue = scipy.stats.mannwhitneyu(result1, result2)[1]
+    if pvalue < 0.05:
+        print('We reject the null hypothesis with a p-value of {0:.2g}'.format(pvalue))
+    else:
+        print('We fail to reject the null hypothesis with a p-value of {0:.2g}'.format(pvalue))
     
-    return results
+    ## Estimating confidence intervals using the non-parametric bootstrap
+    meanx = non_parametric_bootstrap(result1, np.mean)
+    meany = non_parametric_bootstrap(result2, np.mean)
+    print(f"Bootstrapped Mean {model_name1}")
+    print_mean_and_confidence_intervals(meanx)
+    print(f"Bootstrapped Mean {model_name2}")
+    print_mean_and_confidence_intervals(meany)
+    sns.distplot(meanx, label=f"Bootstrapped Mean {model_name1}")
+    sns.distplot(meany, label=f"Bootstrapped Mean {model_name2}")
+    plt.ylabel('Probability Density')
+    plt.title('Bootstrapped Mean Values')
+    plt.legend()
+    
+    ## Statistical testing using the non-parametric bootstrap
+    diff = test_null(result1, result2, difference_of_means, iters=1000)
+    sns.distplot(diff)
+    plt.axvline(result1.mean() - result2.mean(), color='red',label='Observed Difference')
+    plt.title('Bootstrapped Difference in Sample Means')
+    plt.xlabel('Difference in Means')
+    plt.ylabel('Density')
+    plt.legend()
+
+    pvalue = len(diff[diff < result1.mean() - result2.mean()])/len(diff)
+
+    print('The p-value for these samples is {0:.2g}'.format(pvalue))
+    if pvalue < 0.05:
+        print('We can reject the null hypothesis that the means are equal between both samples')
+    else:
+        print('We cannot reject the null hypothesis that the means are equal between both samples')
+        
+    diff_vars = test_null(wt - wt.mean(), mt - mt.mean(), difference_of_variance, iters=1000)
+    sns.distplot(diff_vars)
+    plt.axvline(result1.std()**2 - result2.std()**2, color='red',label='Observed Difference')
+    plt.title('Bootstrapped Difference in Sample Variances')
+    plt.xlabel('Difference in Means')
+    plt.ylabel('Density')
+    plt.legend()
+
+    pvalue = len(diff_vars[diff_vars > result1.std()**2 - result2.std()**2])/len(diff)
+
+    print('The p-value for these samples is {0:.2g}'.format(pvalue))
+    if pvalue < 0.05:
+        print('We can reject the null hypothesis that the variances are equal between both samples')
+    else:
+        print('We cannot reject the null hypothesis that the variances are equal between both samples')
 
 
-def print_results(model_name, results):
-    print(f"\n=== {model_name} ===")
-    for metric, stats in results.items():
-        print(f"\n** {metric} **")
-        print(f"Mean: {stats['mean']:.4f}")
-        print(f"SD: ±{stats['std_dev']:.4f}")
-        print(f"95% CI: [{stats['ci_95'][0]:.4f}, {stats['ci_95'][1]:.4f}]")
-        
-        
-
-        
 if __name__ == '__main__':
 
     print("Statistical testing using the non-parametric bootstrap")    
@@ -178,7 +262,7 @@ if __name__ == '__main__':
     params = {
          "lr": 0.000572, "gat_hidden": 160, "batch_size": 96, 
          "pos_weight_val": 3.5, "num_layers": 3, "alpha": 0.4}
-    n_runs = 30  # Number of runs (recommended: 10-30)
+    n_runs = 3  # Number of runs (recommended: 10-50)
 
     print("\n==== Evaluating Hybrid Model (CNN + GAT) ====")
     hybrid_results = evaluate_model_multiple_runs(
@@ -204,21 +288,15 @@ if __name__ == '__main__':
         y_test=y_test,
         device='cuda'
     )
-
-    print_results("Hybrid Model (CNN + GAT)", hybrid_results)
-    print_results("CNN Model", cnn_results)
-
     metric_names = ["accuracy", "precision_score", "sensitivity_score", "specificity_score", "auc", "mcc"]
 
     print("\n=== Statistical Significance (Paired t-Test) ===")
     for metric in metric_names:
+        
         hybrid_values = hybrid_results[metric]['all_values']
         cnn_values = cnn_results[metric]['all_values']
-        t_stat, p_value = ttest_rel(hybrid_values, cnn_values)
+        print_results("Hybrid Model (CNN + GAT)", "CNN Model", hybrid_values, cnn_values)
+        
 
-        print(f"\n** {metric} **")
-        print(f"p-value: {p_value:.4f}")
-        if p_value < 0.05:
-            print("--> Significant (p < 0.05)")
-        else:
-            print("--> Not significant (p ≥ 0.05)")
+        
+        

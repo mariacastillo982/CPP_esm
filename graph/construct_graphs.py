@@ -1,8 +1,8 @@
 import pandas as pd
-from graph import nodes, edges, structure
+from graph import edges
 from tqdm import tqdm
 import numpy as np
-from workflow.parameters_setter import ParameterSetter
+#from workflow.parameters_setter import ParameterSetter
 import torch
 from torch_geometric.data import Data
 from pathlib import Path
@@ -86,32 +86,4 @@ def pad_or_truncate(features, fixed_length):
     
     return p
 
-def prepare_data(workflow_settings: ParameterSetter, data: pd.DataFrame):
 
-    """
-    Prepare dataset using only node embeddings without graph structures.
-
-    :param workflow_settings: Workflow settings.
-    :param data: DataFrame with (id, sequence, activity, label).
-    :return:
-        features: Tensor of shape (n_samples, n_features)
-        labels: Tensor of shape (n_samples,)
-    """
-    # Extract node features (embeddings)
-    print(workflow_settings)
-    nodes_features, esm2_contact_maps = nodes.esm2_derived_features(workflow_settings, data)
-    # Extract edges features (atom_coordinates_matrices)
-    atom_coordinates_matrices, weights_matrices, data = structure.get_edges(workflow_settings, data, esm2_contact_maps)
-
-    max_length_f = max(len(x) for x in nodes_features)  # Find the longest feature vector
-    max_length_coor = max(x.shape[0] for x in atom_coordinates_matrices)  # Find the longest feature vector
-    
-    features = pad_or_truncate(nodes_features, max_length_f)
-    coordinates = pad_or_truncate(atom_coordinates_matrices, max_length_coor)
-    
-    atom_coordinates_matrices_arr = np.array(coordinates, dtype=np.float32)
-    
-    # Extract labels
-    labels = np.array(data["activity"].values, dtype=np.float32) if "activity" in data.columns else None
-    #labels = torch.tensor(data["activity"].values, dtype=torch.float32) if "activity" in data.columns else None
-    return features, atom_coordinates_matrices_arr, labels

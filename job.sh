@@ -13,4 +13,5 @@ module purge
 #module load openfold/1.0.1
 module load cuda/11.7.1
 
-python pLM_graph.py
+#python pLM_graph.py
+python statistical_test.py
