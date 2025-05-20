@@ -4,7 +4,7 @@
 #SBATCH --gpus=1
 #SBATCH --mem=64G
 #SBATCH --gpus=1
-#SBATCH --time=06:00:00
+#SBATCH --time=36:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --output=out/%x-%j-slurm.out
 #SBATCH --error=err/%x-%j-slurm.err

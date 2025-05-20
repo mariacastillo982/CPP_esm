@@ -47,6 +47,8 @@ from models.GAT.GAT import Conv1DClassifier, GATModel
 from graph.tertiary_structure_handler import load_tertiary_structures, predict_tertiary_structures
 from pLM_graph import train_hybrid_model, test_hybrid_model, train_test_CNN_model
 from numpy import random
+import scipy as scipy
+import seaborn as sns
 
 def non_parametric_bootstrap(x, f, nsim=1000, **kwargs):
     """
@@ -147,7 +149,7 @@ def evaluate_model_multiple_runs(n_runs, model_type='hybrid', X_train=None, grap
     return all_metrics
 
 
-def print_results(model_name1, model_name2, result1, result2):
+def print_results(model_name1, model_name2, result1, result2, metric):
     ## The Mann-Whitney U test for equality of distributions
     pvalue = scipy.stats.mannwhitneyu(result1, result2)[1]
     if pvalue < 0.05:
@@ -158,25 +160,33 @@ def print_results(model_name1, model_name2, result1, result2):
     ## Estimating confidence intervals using the non-parametric bootstrap
     meanx = non_parametric_bootstrap(result1, np.mean)
     meany = non_parametric_bootstrap(result2, np.mean)
-    print(f"Bootstrapped Mean {model_name1}")
+    print(f"Bootstrapped Mean {metric} for the {model_name1}")
     print_mean_and_confidence_intervals(meanx)
-    print(f"Bootstrapped Mean {model_name2}")
+    print(f"Bootstrapped Mean {metric} for the {model_name2}")
     print_mean_and_confidence_intervals(meany)
-    sns.distplot(meanx, label=f"Bootstrapped Mean {model_name1}")
-    sns.distplot(meany, label=f"Bootstrapped Mean {model_name2}")
+    
+    plt.figure(figsize=(8, 5))
+    sns.histplot(meanx, kde=True, label=f"{model_name1}")
+    sns.histplot(meany, kde=True, label=f"{model_name2}")
     plt.ylabel('Probability Density')
-    plt.title('Bootstrapped Mean Values')
+    plt.title(f"Bootstrapped Mean Values: {metric.replace('_', ' ')}")
     plt.legend()
+    plt.savefig(f"./output/Bootstrapped_Mean_{metric}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
     
     ## Statistical testing using the non-parametric bootstrap
     diff = test_null(result1, result2, difference_of_means, iters=1000)
-    sns.distplot(diff)
-    plt.axvline(result1.mean() - result2.mean(), color='red',label='Observed Difference')
-    plt.title('Bootstrapped Difference in Sample Means')
+    plt.figure(figsize=(8, 5))
+    sns.histplot(diff, kde=True)
+    plt.axvline(result1.mean() - result2.mean(), color='red', label='Observed Difference')
+    plt.title(f"Bootstrapped Difference in Sample Means: {metric.replace('_', ' ')}")
     plt.xlabel('Difference in Means')
     plt.ylabel('Density')
     plt.legend()
-
+    plt.savefig(f"./output/Bootstrapped_Diff_Sample_Means_{metric}.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    
     pvalue = len(diff[diff < result1.mean() - result2.mean()])/len(diff)
 
     print('The p-value for these samples is {0:.2g}'.format(pvalue))
@@ -185,13 +195,16 @@ def print_results(model_name1, model_name2, result1, result2):
     else:
         print('We cannot reject the null hypothesis that the means are equal between both samples')
         
-    diff_vars = test_null(wt - wt.mean(), mt - mt.mean(), difference_of_variance, iters=1000)
-    sns.distplot(diff_vars)
-    plt.axvline(result1.std()**2 - result2.std()**2, color='red',label='Observed Difference')
-    plt.title('Bootstrapped Difference in Sample Variances')
-    plt.xlabel('Difference in Means')
+    diff_vars = test_null(result1 - result1.mean(), result2 - result2.mean(), difference_of_variance, iters=1000)
+    plt.figure(figsize=(8, 5))
+    sns.histplot(diff_vars, kde=True)
+    plt.axvline(result1.std()**2 - result2.std()**2, color='red', label='Observed Difference')
+    plt.title(f"Bootstrapped Difference in Sample Variances: {metric.replace('_', ' ')}")
+    plt.xlabel('Difference in Variances')
     plt.ylabel('Density')
     plt.legend()
+    plt.savefig(f"./output/Bootstrapped_Diff_Sample_Vars_{metric}.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
     pvalue = len(diff_vars[diff_vars > result1.std()**2 - result2.std()**2])/len(diff)
 
@@ -262,7 +275,7 @@ if __name__ == '__main__':
     params = {
          "lr": 0.000572, "gat_hidden": 160, "batch_size": 96, 
          "pos_weight_val": 3.5, "num_layers": 3, "alpha": 0.4}
-    n_runs = 3  # Number of runs (recommended: 10-50)
+    n_runs = 100  # Number of runs (recommended: 10-50)
 
     print("\n==== Evaluating Hybrid Model (CNN + GAT) ====")
     hybrid_results = evaluate_model_multiple_runs(
@@ -283,7 +296,7 @@ if __name__ == '__main__':
         n_runs=n_runs,
         model_type='CNN',
         X_train=X_train_val_scaled,
-        y_train=y_train,
+        y_train=y_train_val,
         X_test=X_test_scaled,
         y_test=y_test,
         device='cuda'
@@ -292,10 +305,16 @@ if __name__ == '__main__':
 
     print("\n=== Statistical Significance (Paired t-Test) ===")
     for metric in metric_names:
+        hybrid_values = hybrid_results[metric]
+        cnn_values = cnn_results[metric]
+        print("\n=====================================================================")
+        print(f"================{metric}================")
+        print("\n=== Results GAT + CNN ===")
+        print(hybrid_values)
+        print("\n=== Results CNN ===")
+        print(cnn_values)
         
-        hybrid_values = hybrid_results[metric]['all_values']
-        cnn_values = cnn_results[metric]['all_values']
-        print_results("Hybrid Model (CNN + GAT)", "CNN Model", hybrid_values, cnn_values)
+        print_results("Hybrid Model (CNN + GAT)", "CNN Model", np.array(hybrid_values), np.array(cnn_values), metric)
         
 
         
