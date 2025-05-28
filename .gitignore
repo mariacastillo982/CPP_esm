@@ -20,6 +20,7 @@ __pycache__/
 **/output/
 *.out
 *.err
+**/Ontology/
 
 # Data files (adjust or generalize as needed)
 whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv
