@@ -1,0 +1,7 @@
+biopython
+openai
+owlready2
+spacy
+
+# After installing spacy, download the English model:
+# python -m spacy download en_core_web_sm
