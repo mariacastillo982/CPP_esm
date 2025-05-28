@@ -5,9 +5,13 @@ from torch import hub
 import esm
 from esm import FastaBatchedDataset
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 from tqdm import tqdm
 from utils import json_parser
-
+import collections
+from pathlib import Path
+import gc
+torch.cuda.empty_cache()
 
 def get_models(esm2_representation):
     """
@@ -100,59 +104,54 @@ def get_embeddings(data, model_name, reduced_features, validation_mode, randomne
     except Exception as e:
         print(f"Error in get_embeddings function: {e}")
 
-def esm_embeddings(esm2, esm2_alphabet, peptide_sequence_list_tuples): # Input changed to list of tuples
-  # peptide_sequence_list_tuples should be like [('prot1', 'SEQ1'), ('prot2', 'SEQ2')]
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+def esm_embeddings(esm2, esm2_alphabet, peptide_sequence_list, batch_size=4):
+    # Device setup
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     esm2 = esm2.eval().to(device)
-
     batch_converter = esm2_alphabet.get_batch_converter()
-
-    # load the peptide sequence list into the bach_converter
-    # peptide_sequence_list_tuples is already in the format [ (name, seq), ... ]
-    batch_labels, batch_strs, batch_tokens = batch_converter(peptide_sequence_list_tuples)
-    batch_lens = (batch_tokens != esm2_alphabet.padding_idx).sum(1) # Use esm2_alphabet here
-
-    batch_tokens = batch_tokens.to(device)
-
-    # Extract per-residue representations (on CPU)
-    with torch.no_grad():
-      # Here we export the last layer of the EMS model output as the representation of the peptides
-      # model'esm2_t33_650M_UR50D' has 33 layers.
-        results = esm2(batch_tokens, repr_layers=[33], return_contacts=False)
-    token_representations = results["representations"][33].cpu()
-
-    # Generate per-sequence representations via averaging
-    # NOTE: token 0 is always a beginning-of-sequence token, so the first residue is token 1.
+    
+    # Initialize results storage
+    embeddings_results = collections.defaultdict(list)
     sequence_representations = []
-    for i, tokens_len in enumerate(batch_lens):
-        sequence_representations.append(token_representations[i, 1 : tokens_len - 1].mean(0))
     
-    # Store embeddings in a DataFrame, indexed by the original labels/names
-    # embeddings_results = collections.defaultdict(list) # Not needed if constructing DataFrame directly
+    # Process in batches
+    for i in tqdm(range(0, len(peptide_sequence_list), batch_size), desc="Processing ESM embeddings"):
+        batch_sequences = peptide_sequence_list[i:i+batch_size]
+        
+        try:
+            # Convert and move to device
+            batch_labels, batch_strs, batch_tokens = batch_converter(batch_sequences)
+            batch_tokens = batch_tokens.to(device)
+            batch_lens = (batch_tokens != esm2_alphabet.padding_idx).sum(1)
+            
+            with torch.no_grad():
+                with torch.cuda.amp.autocast():  # Mixed precision for memory savings
+                    results = esm2(batch_tokens, repr_layers=[33], return_contacts=False)
+            
+            # Move representations to CPU immediately
+            token_representations = results["representations"][33].cpu()
+            
+            # Process each sequence in the batch
+            for j, tokens_len in enumerate(batch_lens):
+                seq_rep = token_representations[j, 1:tokens_len-1].mean(0)
+                sequence_representations.append(seq_rep)
+            
+            # Clean up
+            del batch_labels, batch_strs, batch_tokens, results, token_representations
+            torch.cuda.empty_cache()
+            gc.collect()
+            
+        except RuntimeError as e:
+            if 'CUDA out of memory' in str(e):
+                print(f"Memory error with batch size {batch_size}. Reducing batch size...")
+                return esm_embeddings(esm2, esm2_alphabet, peptide_sequence_list, batch_size=max(1, batch_size//2))
+            raise
     
-    # Check if batch_labels (protein names) were correctly passed and use them for DataFrame index
-    # If peptide_sequence_list_tuples was [('ID1', 'SEQ1'), ('ID2', 'SEQ2'), ...],
-    # then batch_labels should be ['ID1', 'ID2', ...]
+    # Convert to DataFrame
+    for i, seq_rep in enumerate(sequence_representations):
+        embeddings_results[i] = seq_rep.tolist()
     
-    # df_data = {label: rep.tolist() for label, rep in zip(batch_labels, sequence_representations)}
-    # embeddings_df = pd.DataFrame.from_dict(df_data, orient='index')
-
-    # If batch_labels are not protein names but just indices, then create a simple list of lists/arrays
-    embedding_data_list = [seq_rep.tolist() for seq_rep in sequence_representations]
-    
-    # If batch_labels are indeed the names/IDs from the input tuples:
-    if len(batch_labels) == len(embedding_data_list):
-        embeddings_df = pd.DataFrame(embedding_data_list, index=batch_labels)
-    else: # Fallback if batch_labels are not as expected
-        embeddings_df = pd.DataFrame(embedding_data_list)
-
-
-    del batch_strs, batch_tokens, results, token_representations, batch_lens
-    gc.collect() # Explicit garbage collection
-    return embeddings_df
+    return pd.DataFrame(embeddings_results).T
 
 def generate_esm_embeddings(model_esm, alphabet_esm, sequence_list, output_file_path): # Renamed args
     """

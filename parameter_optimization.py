@@ -26,7 +26,7 @@ def make_objective(X,graphs,y,X_test, graphs_test, y_test):
         }
 
         
-        model, _, _, metrics_val = train_hybrid_model(X, graphs, y, trial_params, alpha=trial_params["alpha"], device='cuda:0')
+        model, _, _, metrics_val = train_hybrid_model(X, graphs, y, trial_params, 123, alpha=trial_params["alpha"], device='cuda:0')
         metrics, _, _, _ = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda:0')
         
         # The original objective was:
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     # Example of how to use best_params 
     best_params = trial.params
     print("\nTraining final model with best parameters found by Optuna...")
-    final_model, _, _, _ = train_hybrid_model(X_train_val_scaled, graphs_train_val, y_train_val, best_params, alpha=best_params["alpha"], device='cuda:0')
+    final_model, _, _, _ = train_hybrid_model(X_train_val_scaled, graphs_train_val, y_train_val, best_params, 123, alpha=best_params["alpha"], device='cuda:0')
     final_metrics, _, _, _ = test_hybrid_model(final_model, X_test_scaled, graphs_test, y_test, device='cuda:0')
     print("\nFinal model performance on test set:")
     for k, v in final_metrics[0].items():

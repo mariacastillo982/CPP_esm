@@ -13,5 +13,7 @@ module purge
 #module load openfold/1.0.1
 module load cuda/11.7.1
 
-#python pLM_graph.py
-python statistical_test.py
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
+python pLM_graph.py
+#python statistical_test.py

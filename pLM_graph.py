@@ -46,7 +46,7 @@ from models.esm2.esm2_model_handler import generate_esm_embeddings
 from models.GAT.GAT import Conv1DClassifier, GATModel
 from graph.tertiary_structure_handler import load_tertiary_structures, predict_tertiary_structures
 
-
+torch.cuda.empty_cache()
 
 def plot_output_scores(val_scores, val_labels, save_path):
     # Ensure inputs are numpy arrays
@@ -225,7 +225,7 @@ def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, random_stat
 
     scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: step_decay(epoch) / 0.01)
 
-
+    best_thresh = 0.5
     best_val_mcc_cnn = -1.0 # Changed from acc to mcc for consistency with other models
     best_model_wts = copy.deepcopy(model.state_dict())
     early_stop_patience = 20
@@ -297,6 +297,7 @@ def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, random_stat
         print(f"Epoch {epoch+1}/{num_epochs} - Train Loss: {epoch_loss / (len(X_train) / batch_size):.4f}, Train Acc: {train_acc:.4f}, Val MCC: {current_best_mcc_val:.4f}, Val AUC: {val_auc:.4f}") 
 
         if current_best_mcc_val > best_val_mcc_cnn:
+            best_thresh = best_thresh_val
             best_val_mcc_cnn = current_best_mcc_val
             best_model_wts = copy.deepcopy(model.state_dict())
             epochs_without_improve = 0
@@ -323,7 +324,7 @@ def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, random_stat
         best_thresh_test, best_mcc_test = optimize_threshold(test_y_tensor.cpu(), test_outputs_logits)
         
         test_scores_probs = torch.sigmoid(test_outputs_logits) # Probabilities
-        test_preds_final = (test_scores_probs > best_thresh_test).float() # Use test-optimized threshold
+        test_preds_final = (test_scores_probs > best_thresh).float() # Use test-optimized threshold
 
         test_acc = accuracy_score(y_true=test_y_tensor.cpu(), y_pred=test_preds_final.cpu())
         test_auc = roc_auc_score(y_true=test_y_tensor.cpu(), y_score=test_scores_probs.cpu())
@@ -355,10 +356,7 @@ def train_test_CNN_model(X_full, y_full, X_test_final, y_test_final, random_stat
     save_metrics_to_csv(metrics_test_final, "output/testing_results_CNN.csv")
     
     # Return model, validation y and scores, test y and scores, and test metrics
-    return model, val_y_cpu_plot, val_scores_cpu_plot, test_y_cpu_plot, test_scores_cpu_plot, metrics_test_final
-
-
-
+    return model, val_y_cpu_plot, val_scores_cpu_plot, test_y_cpu_plot, test_scores_cpu_plot, test_preds_final, metrics_test_final
 
 def sensitivity(y_true, y_pred):
     # Ensure y_true, y_pred are numpy arrays
@@ -399,6 +397,24 @@ def specificity(y_true, y_pred):
     except ValueError:
         return np.nan
 
+def load_hybrid_model(model_path, device='cuda:0'):
+    # First recreate the model architecture
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    model = HybridModel(
+        cnn_input_channels=1,
+        cnn_seq_len=checkpoint['cnn_seq_len'],
+        node_feature_dimension=checkpoint['node_feature_dimension'],
+        gat_hidden=checkpoint['trial_params']['gat_hidden'],
+        alpha=checkpoint['alpha'],
+        num_layers=checkpoint['trial_params']['num_layers']
+    ).to(device)
+    
+    # Load the saved weights
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    return model, checkpoint
 
 class HybridModel(nn.Module):
     def __init__(self, cnn_input_channels=1, cnn_seq_len=1280,
@@ -471,7 +487,8 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, r
     optimizer = torch.optim.Adam(model.parameters(), lr=trial_params["lr"])
     # Scheduler: ensure step_decay is compatible with this LR
     scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: step_decay(epoch) / 0.01) 
-
+    
+    best_thresh = 0.5
     best_val_mcc_hybrid = -1.0 # Monitor MCC on validation set
     best_model_wts = copy.deepcopy(model.state_dict())
     early_stop_patience = 20 # Number of epochs to wait for improvement
@@ -544,9 +561,9 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, r
             
             # Optimize threshold on validation logits
             best_thresh_val_hybrid, current_mcc_val_hybrid = optimize_threshold(val_y_labels_tensor, val_outputs_logits)
-            
+            print(f"best_thresh_val_hybrid: {best_thresh_val_hybrid}")
             val_scores_probs = torch.sigmoid(val_outputs_logits) # Probabilities
-            val_preds_final_hybrid = (val_scores_probs > best_thresh_val_hybrid).float() # Use optimized threshold
+            val_preds_final_hybrid = (val_scores_probs > 0.5).float() # Use optimized threshold
 
             # Calculate validation metrics
             val_acc_hybrid = accuracy_score(val_y_labels_tensor.cpu(), val_preds_final_hybrid.cpu())
@@ -554,6 +571,7 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, r
             val_precision_hybrid = precision_score(val_y_labels_tensor.cpu(), val_preds_final_hybrid.cpu(), zero_division=0)
             val_recall_hybrid = recall_score(val_y_labels_tensor.cpu(), val_preds_final_hybrid.cpu(), zero_division=0)
             val_specificity_hybrid = specificity(val_y_labels_tensor.cpu(), val_preds_final_hybrid.cpu())
+            
             # current_mcc_val_hybrid is already calculated by optimize_threshold
 
         metrics_log_hybrid.append({
@@ -572,6 +590,7 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, r
         print(f"Hybrid Val: Epoch {epoch+1} - MCC: {current_mcc_val_hybrid:.4f}, AUC: {val_auc_hybrid:.4f}, Acc: {val_acc_hybrid:.4f}")
 
         if current_mcc_val_hybrid > best_val_mcc_hybrid:
+            best_thresh = best_thresh_val_hybrid
             best_val_mcc_hybrid = current_mcc_val_hybrid
             best_model_wts = copy.deepcopy(model.state_dict())
             epochs_without_improve = 0
@@ -588,6 +607,21 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, r
         scheduler.step()
 
     model.load_state_dict(best_model_wts) # Load the best model weights found during validation
+    
+    save_path = "/ibex/user/castilmg/CPP/CPP_esm/output/results/best_model.pth"
+    
+    # Save the complete model (architecture + weights) for easy loading later
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'trial_params': trial_params,
+        'node_feature_dimension': node_feature_dimension,
+        'cnn_seq_len': X_train_embed.shape[1],
+        'alpha': alpha,
+        'random_state': random_state
+    }, save_path)
+    
+    print(f"Best model saved to {save_path}")
+    
     save_metrics_to_csv(metrics_log_hybrid, "output/training_validation_results_Hybrid_CNN_GAT.csv")
     
     model.eval()
@@ -599,10 +633,10 @@ def train_hybrid_model(X_full_embed, graphs_full, y_full_labels, trial_params, r
     
     val_y_cpu_for_plot = y_val_labels 
     
-    return model, val_y_cpu_for_plot, val_scores_probs_final, final_val_metrics_on_best_epoch
+    return model, val_y_cpu_for_plot, val_scores_probs_final, final_val_metrics_on_best_epoch, best_thresh
 
 
-def test_hybrid_model(model, X_test_embed, graphs_test_list, y_test_labels, device='cuda:0'): 
+def test_hybrid_model(model, X_test_embed, graphs_test_list, y_test_labels, best_thresh, device='cuda:0'): 
     """
     Evaluate the trained HybridModel on the test dataset.
     """
@@ -641,10 +675,10 @@ def test_hybrid_model(model, X_test_embed, graphs_test_list, y_test_labels, devi
         )
         
         # Optimize threshold on test logits (common practice, or use val threshold)
-        best_thresh_test_hybrid, mcc_test_hybrid = optimize_threshold(y_test_labels_tensor, outputs_logits_test)
-        
+        #best_thresh_test_hybrid, mcc_test_hybrid = optimize_threshold(y_test_labels_tensor, outputs_logits_test)
+        #print(f"best_thresh_test_hybrid: {best_thresh_test_hybrid}")
         y_scores_probs_test = torch.sigmoid(outputs_logits_test).cpu() # Probabilities, on CPU
-        y_preds_final_test = (y_scores_probs_test > best_thresh_test_hybrid).float() # Final predictions
+        y_preds_final_test = (y_scores_probs_test > best_thresh).float() # Final predictions
         y_true_test_cpu = y_test_labels_tensor.cpu()
         
         # Compute metrics
@@ -653,6 +687,7 @@ def test_hybrid_model(model, X_test_embed, graphs_test_list, y_test_labels, devi
         recall_test = recall_score(y_true_test_cpu, y_preds_final_test, zero_division=0) # Sensitivity       
         auc_test = roc_auc_score(y_true=y_true_test_cpu.numpy(), y_score=y_scores_probs_test.numpy()) # roc_auc_score needs numpy
         specificity_test = specificity(y_true_test_cpu, y_preds_final_test)
+        mcc_test_hybrid = matthews_corrcoef(y_true_test_cpu, y_preds_final_test)
         # mcc_test_hybrid is already calculated
         
     metrics_test_hybrid = [{
@@ -670,10 +705,11 @@ def test_hybrid_model(model, X_test_embed, graphs_test_list, y_test_labels, devi
     # plot_roc_curve(test_y_cpu_plot, test_scores_cpu_plot, "roc_auc_testing_hybrid.png")
     
     print(f"Test Hybrid: Acc: {accuracy_test:.4f}, Precision: {precision_test:.4f}, Sensitivity: {recall_test:.4f}, Specificity: {specificity_test:.4f}, AUC: {auc_test:.4f}, MCC: {mcc_test_hybrid:.4f}")
-    save_metrics_to_csv(metrics_test_hybrid, "output/testing_results_Hybrid_CNN_GAT.csv")
+    save_metrics_to_csv(metrics_test_hybrid, "output/testing_results_Hybrid_CNN_GAT_CPP924.csv")
     
     # Return: metrics dict, predictions (binary), true labels (numpy), scores (probabilities)
-    return metrics_test_hybrid, y_preds_final_test.numpy().flatten(), test_y_cpu_plot, test_scores_cpu_plot
+    #y_preds_final_test.numpy().flatten(),
+    return metrics_test_hybrid, y_scores_probs_test.numpy().flatten(), y_preds_final_test.numpy().flatten(), test_y_cpu_plot, test_scores_cpu_plot
 
 
 if __name__ == '__main__':
@@ -697,43 +733,66 @@ if __name__ == '__main__':
     
     # Check if embedding file exists, else generate
     train_val_embeddings_file = 'input/whole_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    #X_train_val_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_train_val, train_val_embeddings_fil
     if os.path.exists(train_val_embeddings_file):
         print(f"Loading existing train/val embeddings from {train_val_embeddings_file}")
         X_train_val_data = pd.read_csv(train_val_embeddings_file,header=0, index_col = 0,delimiter=',')
     else:
         print(f"Generating train/val embeddings and saving to {train_val_embeddings_file}")
         X_train_val_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_train_val, train_val_embeddings_file)
-    
+        
     X_train_val = np.array(X_train_val_data)
     y_train_val = np.array(dataset_train_val['label'])
     
     graphs_train_val = generate_graphs(sequence_list_train_val, dataset_train_val, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs/'))
     
-    # Load test dataset
+    # Load kelm test dataset
     dataset_test = pd.read_excel('input/kelm.xlsx',na_filter = False) # take care the NA sequence 
     sequence_list_test = dataset_test['sequence']
     
     # get embeddings for testing
     test_embeddings_file = 'input/kelm_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    #X_test_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_test, test_embeddings_file)
+
     if os.path.exists(test_embeddings_file):
         print(f"Loading existing test embeddings from {test_embeddings_file}")
         X_test_data = pd.read_csv(test_embeddings_file,header=0, index_col = 0,delimiter=',')
     else:
         print(f"Generating test embeddings and saving to {test_embeddings_file}")
         X_test_data = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_test, test_embeddings_file)
-    
+
     X_test = np.array(X_test_data)
     y_test = np.array(dataset_test['label'])
-
+    
+    # get graphs for testing
+    graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs_kelm/'))
+    
+    # Load CPP924 test dataset
+    dataset_test2 = pd.read_csv('input/unique_sequences_file1.csv',na_filter = False) # take care the NA sequence 
+    sequence_list_test2 = dataset_test2['sequence']
+    
+    # get embeddings for testing
+    test_embeddings_file2 = 'input/unique_sequences_file1_sample_dataset_esm2_t33_650M_UR50D_unified_1280_dimension.csv'
+    if os.path.exists(test_embeddings_file2):
+        print(f"Loading existing test embeddings from {test_embeddings_file2}")
+        X_test_data2 = pd.read_csv(test_embeddings_file2,header=0, index_col = 0,delimiter=',')
+    else:
+        print(f"Generating test embeddings and saving to {test_embeddings_file2}")
+        X_test_data2 = generate_esm_embeddings(model_esm_embed, alphabet_esm_embed, sequence_list_test2, test_embeddings_file2)
+    
+    X_test2 = np.array(X_test_data2)
+    y_test2 = np.array(dataset_test2['label'])
+    
+    # get graphs for testing
+    graphs_test2 = generate_graphs(sequence_list_test2, dataset_test2, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs_CPP924/'))
+    
     # Normalize the data 
     scaler = MinMaxScaler()
     scaler.fit(X_train_val) # Fit scaler ONLY on the training/validation portion that Optuna will see and split.
     
     X_train_val_scaled = scaler.transform(X_train_val)
     X_test_scaled = scaler.transform(X_test)
-
-    # get graphs for testing
-    graphs_test = generate_graphs(sequence_list_test, dataset_test, tertiary_structure_method=False, pdb_path = Path('./output/ESMFold_pdbs_kelm/'))
+    X_test_scaled2 = scaler.transform(X_test2)
     
     params = {
          "lr": 0.000572, "gat_hidden": 160, "batch_size": 96, 
@@ -743,10 +802,205 @@ if __name__ == '__main__':
 
     seed = random.randint(100)
     print("---------------------------- Training & Testing CNN ----------------------------:")
-    model_CNN, val_y_cnn, val_score_cnn, test_y_cnn, test_score_cnn, metrics_CNN = train_test_CNN_model(X_train_val, y_train_val, X_test, y_test, seed, device='cuda')
+    model_CNN, val_y_cnn, val_score_cnn, test_y_cnn, test_score_cnn, test_preds_cnn, metrics_CNN = train_test_CNN_model(X_train_val, y_train_val, X_test, y_test, seed, device='cuda')
     
     print("---------------------------- Training CNN + GAT----------------------------:")    
-    model,val_y_gat,val_score_gat, metrics_val = train_hybrid_model(X_train_val, graphs_train_val, y_train_val, params, seed, alpha=0.6, device='cuda')
-    print("---------------------------- Testing CNN + GAT----------------------------:")  
-    metrics_GAN, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test, graphs_test, y_test, device='cuda')
+    model,val_y_gat,val_score_gat, metrics_val, best_thresh = train_hybrid_model(X_train_val_scaled, graphs_train_val, y_train_val, params, seed, alpha=0.6, device='cuda')
+    model, checkpoint = load_hybrid_model('/ibex/user/castilmg/CPP/CPP_esm/output/results/best_model.pth')
+    
+    print("---------------------------- Testing CNN + GAT ====KELM====   ----------------------------:")  
+    metrics_GAN, scores, preds, test_y_gat, test_score_gat = test_hybrid_model(model, X_test_scaled, graphs_test, y_test, best_thresh, device='cuda')
+    
+    print("---------------------------- Testing CNN + GAT ====CPP924====   ----------------------------:")  
+    metrics_GAN2, scores2, preds2, test_y_gat2, test_score_gat2 = test_hybrid_model(model, X_test_scaled2, graphs_test2, y_test2, best_thresh, device='cuda')
+    
+    # ---- For KELM ----
+
+    # 1. Save embedding results
+    df_embed_results = pd.DataFrame({
+        "sequence": sequence_list_test,
+        "embedding": [emb.tolist() for emb in X_test],
+        "true_label":y_test.tolist(),
+        "predicted_label_Graph": preds.tolist(),
+        "prediction_score_Graph": scores.tolist(),
+        "predicted_label_CNN": test_preds_cnn.tolist(),
+        "prediction_score_CNN": test_score_cnn.tolist()
+    })
+    df_embed_results.to_csv("output/kelm_embedding_predictions.csv", index=False)
+
+    # 2. Save graph-based results
+    df_graph_results = pd.DataFrame({
+        "sequence": sequence_list_test,
+        "graph": [str(graph) for graph in graphs_test],  # or serialize however appropriate
+        "true_label":y_test.tolist(),
+        "predicted_label": preds.tolist(),
+        "prediction_score": scores.tolist()
+    })
+    df_graph_results.to_csv("output/kelm_graph_predictions.csv", index=False)
+
+    # ---- For CPP924 ----
+
+    # 1. Save embedding results
+    df_embed_results2 = pd.DataFrame({
+        "sequence": sequence_list_test2,
+        "embedding": [emb.tolist() for emb in X_test2],
+        "true_label":y_test2.tolist(),
+        "predicted_label": preds2.tolist(),
+        "prediction_score": scores2.tolist()
+    })
+    df_embed_results2.to_csv("output/cpp924_embedding_predictions.csv", index=False)
+
+    # 2. Save graph-based results
+    df_graph_results2 = pd.DataFrame({
+        "sequence": sequence_list_test2,
+        "graph": [str(graph) for graph in graphs_test2],
+        "true_label":y_test2.tolist(),
+        "predicted_label": preds2.tolist(),
+        "prediction_score": scores2.tolist()
+    })
+    df_graph_results2.to_csv("output/cpp924_graph_predictions.csv", index=False)
+
+    """
+    #==================================================
+    # KELM predictions
+    plt.figure(figsize=(10, 4))
+    plt.subplot(1, 2, 1)
+    plt.scatter(range(len(preds)), test_y_gat, label='True Labels', alpha=0.6)
+    plt.scatter(range(len(preds)), preds, label='Predicted Labels', alpha=0.6)
+    plt.title("KELM - True vs. Predicted")
+    plt.xlabel("Sample Index")
+    plt.ylabel("Label")
+    plt.legend()
+
+    # CPP924 predictions
+    plt.subplot(1, 2, 2)
+    plt.scatter(range(len(preds2)), test_y_gat2, label='True Labels', alpha=0.6)
+    plt.scatter(range(len(preds2)), preds2, label='Predicted Labels', alpha=0.6)
+    plt.title("CPP924 - True vs. Predicted")
+    plt.xlabel("Sample Index")
+    plt.ylabel("Label")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.savefig("output/scatter_plot.png", dpi=300)
+    plt.close()
+    
+    #==================================================
+    # Get indices of misclassified samples
+    misclassified_idxs = np.where(preds != test_y_gat)[0]
+    # Extract misclassified sequences
+    misclassified_seqs = dataset_test.iloc[misclassified_idxs]
+    print(f"Number of misclassified samples (KELM): {len(misclassified_idxs)}/{len(preds)}")
+    # Also extract correctly classified for comparison
+    correct_idxs = np.where(preds == test_y_gat)[0]
+    correct_seqs = dataset_test.iloc[correct_idxs]
+
+    # You can print or analyze those specific samples
+    for i in misclassified_idxs[:10]:  # Show first 10
+        print(f"Index: {i}, True: {test_y_gat[i]}, Pred: {preds[i]}, Score: {scores[i]}")
+        
+    # Get indices of misclassified samples
+    misclassified_idxs2 = np.where(preds2 != test_y_gat2)[0]
+    # Extract misclassified sequences
+    misclassified_seqs2 = dataset_test2.iloc[misclassified_idxs2]
+    print(f"Number of misclassified samples (CPP924): {len(misclassified_idxs2)}/{len(preds2)}")
+    # Also extract correctly classified for comparison
+    correct_idxs2 = np.where(preds2 == test_y_gat2)[0]
+    correct_seqs2 = dataset_test2.iloc[correct_idxs2]
+
+    # You can print or analyze those specific samples
+    for i in misclassified_idxs2[:10]:  # Show first 10
+        print(f"Index: {i}, True: {test_y_gat2[i]}, Pred: {preds2[i]}, Score: {scores2[i]}")
+        
+    #==================================================
+    import umap
+    import seaborn as sns
+
+    # Reduce dimension of X_test_scaled (your embeddings)
+    reducer = umap.UMAP(random_state=42)
+    embedding_2d = reducer.fit_transform(X_test_scaled)
+
+    # Create DataFrame for plotting
+    results_df = pd.DataFrame({
+        'UMAP1': embedding_2d[:, 0],
+        'UMAP2': embedding_2d[:, 1],
+        'True_Label': test_y_gat,
+        'Predicted_Label': preds,  # binarized prediction
+    })
+
+    results_df['Correct'] = results_df['True_Label'] == results_df['Predicted_Label']
+    
+    #==================================================
+    plt.figure(figsize=(6, 5))
+    sns.scatterplot(data=results_df, x='UMAP1', y='UMAP2', hue='True_Label', palette='Set1', alpha=0.7)
+    plt.title("UMAP Embedding Colored by True Label")
+    plt.legend(title="True Label")
+    plt.savefig("output/UMAP_by_TrueLabel.png", dpi=300)
+    plt.close()
+    
+    plt.figure(figsize=(6, 5))
+    sns.scatterplot(data=results_df, x='UMAP1', y='UMAP2', hue='Predicted_Label', palette='Set2', alpha=0.7)
+    plt.title("UMAP Embedding Colored by Predicted Label")
+    plt.legend(title="Predicted")
+    plt.savefig("output/UMAP_by_PredLabel.png", dpi=300)
+    plt.close()
+    
+    plt.figure(figsize=(6, 5))
+    sns.scatterplot(data=results_df, x='UMAP1', y='UMAP2', hue='Correct', palette={True: 'green', False: 'red'}, alpha=0.7)
+    plt.title("UMAP Embedding - Correct vs Misclassified")
+    plt.legend(title="Correctly Classified")
+    plt.savefig("output/UMAP_by_Correctness.png", dpi=300)
+    plt.close()
+
+    #==================================================
+    from sklearn.feature_extraction.text import CountVectorizer
+
+    def extract_ngrams(sequences, n=3):
+        vectorizer = CountVectorizer(analyzer='char', ngram_range=(n, n))
+        X = vectorizer.fit_transform(sequences)
+        freqs = np.array(X.sum(axis=0)).flatten()
+        ngram_freqs = dict(zip(vectorizer.get_feature_names_out(), freqs))
+        return sorted(ngram_freqs.items(), key=lambda x: x[1], reverse=True)
+
+    print("Top motifs in misclassified sequences (KELM):")
+    print(extract_ngrams(misclassified_seqs['sequence'], n=3)[:10])
+
+    print("\nTop motifs in correctly classified sequences (KELM):")
+    print(extract_ngrams(correct_seqs['sequence'], n=3)[:10])
+
+    print("Top motifs in misclassified sequences (CPP924):")
+    print(extract_ngrams(misclassified_seqs['sequence'], n=3)[:10])
+
+    print("\nTop motifs in correctly classified sequences (CPP924):")
+    print(extract_ngrams(correct_seqs['sequence'], n=3)[:10])
+
+    #==================================================
+    import networkx as nx
+
+    # Example: compute degree stats
+    def graph_degree_stats(graphs, indices):
+        avg_degrees = []
+        for i in indices:
+            G = graphs[i]
+            if isinstance(G, nx.Graph):
+                degrees = [d for n, d in G.degree()]
+                avg_degrees.append(np.mean(degrees))
+            else:
+                # for torch_geometric.data.Data
+                degrees = G.edge_index.shape[1] / G.num_nodes
+                avg_degrees.append(degrees)
+        return avg_degrees
+
+    mis_degrees = graph_degree_stats(graphs_test, misclassified_idxs)
+    cor_degrees = graph_degree_stats(graphs_test, correct_idxs)
+
+    # Plot
+    sns.kdeplot(mis_degrees, label="Misclassified")
+    sns.kdeplot(cor_degrees, label="Correct")
+    plt.title("Average Node Degree Distribution")
+    plt.xlabel("Average Degree")
+    plt.legend()
+    plt.savefig("output/Graph_metrics.png", dpi=300)
+    plt.close()
+    """
 
