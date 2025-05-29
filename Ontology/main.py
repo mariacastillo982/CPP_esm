@@ -3,7 +3,7 @@ import argparse
 import os
 from owlready2 import World, get_ontology
 from typing import List, Tuple, Dict
-from dotenv import load_dotenv
+
 from fetch_pubmed import search_pubmed, fetch_abstracts
 from llm_extraction import preprocess_text, extract_triples_with_llm
 from ontology_builder import (
@@ -15,7 +15,9 @@ from ontology_builder import (
     get_or_create_individual,
     sanitize_iri_component
 )
+from dotenv import load_dotenv
 
+load_dotenv()
 # This map helps translate LLM's entity type labels to our defined ontology class names.
 # Keys are expected type labels from LLM (e.g., from "hasType" triples).
 # Values are the actual class names defined in ontology_builder.py (after sanitization if any).
@@ -29,7 +31,6 @@ ENTITY_TYPE_TO_ONTOLOGY_CLASS = {
     # Add other entity types if your LLM prompt defines them and they map to ontology classes
 }
 
-load_dotenv()
 
 def run_pipeline(keyword: str, max_articles_extract: int, max_articles_fetch: int, openai_model: str, output_owl_file: str):
     """
@@ -210,7 +211,7 @@ def run_pipeline(keyword: str, max_articles_extract: int, max_articles_fetch: in
     print(f"Ontology construction complete. Output saved to: {output_owl_file}")
 
     # Clean up the world to free resources, important if running in a loop or long session
-    default_world.close()
+    world.destroy()
 
 
 def main():
@@ -218,15 +219,15 @@ def main():
     parser.add_argument("keyword", type=str, help="Keyword to search PubMed (e.g., 'cell-penetrating peptides').")
     parser.add_argument("--max_articles_fetch", type=int, default=50, help="Maximum number of PubMed articles to fetch initially.")
     parser.add_argument("--max_articles_extract", type=int, default=10, help="Maximum number of fetched articles to process for LLM extraction.")
-    parser.add_argument("--openai_model", type=str, default="gpt-3.5-turbo", help="OpenAI model to use for extraction (e.g., 'gpt-4', 'gpt-3.5-turbo').")
+    parser.add_argument("--openai_model", type=str, default="deepseek/deepseek-r1-0528:free", help="OpenAI model to use for extraction (e.g., 'gpt-4', 'gpt-3.5-turbo').")
     parser.add_argument("--output_owl_file", type=str, default="cpp_ontology.owl", help="Filename for the output OWL ontology.")
     
     args = parser.parse_args()
 
     # API Key Management: Best practice is to use environment variables.
     # Check for essential environment variables
-    if not os.getenv("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY environment variable not set. Please set it before running the script.")
+    if not os.getenv("OPENROUTER_API_KEY"):
+        print("Error: OPENROUTER_API_KEY environment variable not set. Please set it before running the script.")
         return
     
     if not os.getenv("ENTREZ_EMAIL"):

@@ -26,15 +26,18 @@ except OSError:
 # Configure OpenAI API client
 # API key is read from OPENAI_API_KEY environment variable by default
 try:
+
     client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",  # OpenRouter endpoint
-    api_key=os.getenv("OPENAI_API_KEY")      # Your OpenRouter key
-)
+        base_url="https://openrouter.ai/api/v1",  # OpenRouter endpoint
+        api_key=os.getenv("OPENROUTER_API_KEY"))
+
+    
 except Exception as e:
     print(f"Failed to initialize OpenAI client: {e}. Ensure OPENAI_API_KEY environment variable is set.")
     client = None
 
 def preprocess_text(text: str) -> List[str]:
+    
     """
     Cleans text (lowercase, normalizes whitespace) and splits into sentences.
     """
@@ -51,9 +54,20 @@ def preprocess_text(text: str) -> List[str]:
     
     doc = nlp(text)
     sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+    
     return sentences
 
-def extract_triples_with_llm(text_segment: str, model_name: str = "gpt-3.5-turbo") -> List[Tuple[str, str, str]]:
+def check_available_models():
+    try:
+        models = client.models.list()
+        print("Available models:")
+        for model in models.data:
+            print(f"- {model.id}")
+    except Exception as e:
+        print(f"Error listing models: {e}")
+
+
+def extract_triples_with_llm(text_segment: str, model_name: str = "deepseek/deepseek-chat-v3-0324:free") -> List[Tuple[str, str, str]]:
     """
     Uses OpenAI's GPT model to extract entities and relationships as triples.
     (subject, predicate, object)
@@ -61,6 +75,12 @@ def extract_triples_with_llm(text_segment: str, model_name: str = "gpt-3.5-turbo
     Entities: CPP, UptakeMechanism, Cargo, MolecularPlayer, SubcellularTarget
     Relationships: usesMechanism, delivers, involves, targets, hasType
     """
+    try:
+        test = client.models.list()  # Simple API call to test auth
+        print("Connection successful!")
+    except Exception as e:
+        print(f"Auth failed: {e}")
+
     if not client:
         print("OpenAI client not initialized. Cannot extract triples.")
         return []
@@ -97,20 +117,17 @@ def extract_triples_with_llm(text_segment: str, model_name: str = "gpt-3.5-turbo
 
     Extracted triples:
     """
-
     try:
         response = client.chat.completions.create(
-            model=model_name,
+            model="deepseek/deepseek-chat-v3-0324:free",
             messages=[
                 {"role": "system", "content": "You are an expert in bioinformatics and text mining. Your task is to extract structured information as Python-parsable lists of triples."},
                 {"role": "user", "content": prompt}
-            ],
-            temperature=0.1, # Lower temperature for more deterministic and structured output
-            top_p=0.5,
+            ]
         )
         
         content = response.choices[0].message.content.strip()
-        
+
         if not content or content.lower() == "none":
             return []
         
@@ -173,7 +190,7 @@ if __name__ == '__main__':
         for sentence in sentences:
             if not sentence.strip(): continue
             print(f"\nProcessing sentence for LLM: \"{sentence}\"")
-            triples = extract_triples_with_llm(sentence, model_name="google/gemini-pro") # Use a faster model for testing
+            triples = extract_triples_with_llm(sentence, model_name="deepseek/deepseek-chat-v3-0324:free") # Use a faster model for testing
             if triples:
                 print("  Extracted Triples:")
                 for triple in triples:

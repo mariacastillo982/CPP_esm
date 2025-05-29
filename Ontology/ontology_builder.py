@@ -33,6 +33,8 @@ def define_ontology_classes_and_properties(ontology: Ontology):
     Defines the core classes and properties for the CPP ontology within the given ontology object.
     """
     with ontology:
+        # Import OWL vocabulary
+        owl = ontology.get_namespace("http://www.w3.org/2002/07/owl#")
         # --- Define Classes ---
         class CPP(Thing):
             label = "Cell-Penetrating Peptide"
@@ -205,26 +207,31 @@ def populate_ontology_from_triples(ontology: Ontology, triples: List[Tuple[str, 
 
 def link_to_go_terms(ontology: Ontology, individual_label: str, go_id: str):
     """
-    Links an individual in the ontology to a Gene Ontology term URL using 'hasGOTerm' property.
+    Links an individual in the ontology to a Gene Ontology term using owl:sameAs.
+    Also retains the hasGOTerm property for convenience.
     """
     sanitized_label_name = sanitize_iri_component(individual_label)
-    individual = ontology.search_one(iri=f"*{sanitized_label_name}") # Search by IRI fragment (name)
+    individual = ontology.search_one(iri=f"*{sanitized_label_name}") # Search by IRI fragment
     
     if not individual: # Fallback to searching by rdfs:label
         individual = ontology.search_one(label=individual_label)
 
-    if individual and go_id.startswith("GO:") and hasattr(ontology, "hasGOTerm"):
-        go_term_url = GO_NAMESPACE_STR + go_id.replace(":", "_") # e.g., http://purl.obolibrary.org/obo/GO_0006897
-        if go_term_url not in individual.hasGOTerm:
+    if individual and go_id.startswith("GO:"):
+        go_term_url = GO_NAMESPACE_STR + go_id.replace(":", "_")
+        
+        # 1. Add owl:sameAs assertion
+        if not any(str(sameas) == go_term_url for sameas in individual.same_as):
+            individual.same_as.append(go_term_url)
+            print(f"Added owl:sameAs link between '{individual_label}' and GO term: {go_term_url}")
+        
+        # 2. Keep hasGOTerm for convenience (optional)
+        if hasattr(ontology, "hasGOTerm") and go_term_url not in individual.hasGOTerm:
             individual.hasGOTerm.append(go_term_url)
-            print(f"Linked '{individual_label}' to GO term: {go_term_url}")
+    
     elif not individual:
         print(f"Warning: Individual '{individual_label}' not found for GO term linking.")
     elif not go_id.startswith("GO:"):
         print(f"Warning: Invalid GO ID format: {go_id}")
-    elif not hasattr(ontology, "hasGOTerm"):
-        print(f"Warning: DataProperty 'hasGOTerm' not defined in ontology.")
-
 
 def save_ontology(ontology: Ontology, file_path: str):
     """
